@@ -97,7 +97,7 @@ class Robot:
         Initialize the Robot class. 
         
         port: The serial port to connect with the iRobot Create e.g.
-        '/dev/ttyUSB0'.,ax
+        '/dev/ttyUSB0'.
 
         max_speed: The maximum speed each wheel can attain in cm/s.
         """
@@ -438,7 +438,14 @@ class Robot:
         """
 
         current  = self.get_sensor(PKT_BATT_CHG)
-        capacity = self.get_sensor(PKT_BATT_CAP)
+
+        # Avoid division by zero error. 
+        timeout = time.time()
+        while capacity == 0.0 and timeout < 5.0:
+            capacity = self.get_sensor(PKT_BATT_CAP)
+            timeout = time.time() - timeout
+            time.sleep(0.2)
+
         return float(current / capacity)
 
     def get_sensor(self, packet_id):
