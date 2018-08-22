@@ -101,6 +101,18 @@ class Robot:
                 thread.start()
                 print('Thread "%s" started' % thread.name)
 
+    def __init__(self, port):
+        self.baudrate=57600
+        self.port = port
+        self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
+        self.speed = 0
+        self.motion = np.zeros((3, 1))
+
+        print('Time initialized:', datetime.datetime.now())
+
+        print('Connecting via serial port %s with %s baud.'\
+               % (port, self.baudrate))
+
     def start(self):
         self.send_code(START)
 
@@ -127,7 +139,7 @@ class Robot:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
             print('Error: send_code(code) error') 
-
+            
     def send_codes(self, codes):
         for c in codes:
            self.send_code(c)
@@ -144,8 +156,6 @@ class Robot:
         return read_buf
 
     def interpret_code(self, packet_id, read_buf):
-
-#         print('Interpret:', read_buf)
 
         try:
             if packet_id == PKT_DISTANCE:
@@ -205,6 +215,20 @@ class Robot:
         lw = Util.cap(lw, -max_speed, +max_speed)
         rw = Util.cap(rw, -max_speed, +max_speed)
 
+        lw = Util.cmsec_to_mmsec(lw)
+        rw = Util.cmsec_to_mmsec(rw)
+
+            
+        # Cap at (-50, 50) cm/s
+        if lw < -50:
+            lw = -50
+        if lw > 50:
+            lw = 50
+        if rw < -50:
+            rw = -50
+        if rw > 50:
+            rw = 50
+
         rw_high, rw_low = Util.to_twos_comp_2(int(rw))
         lw_high, lw_low = Util.to_twos_comp_2(int(lw))
 
@@ -255,6 +279,9 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
 
+    def poll_distance_thread(rate=1):
+        pass
+
     def halt(self):
         self.drive_direct(0, 0)
     
@@ -290,12 +317,17 @@ class Robot:
 
             print('angular speed:', float(float(delta_angle) / t))
             
+            delta_distance = self.get_sensor(PKT_DISTANCE)
+            print('delta distance:', delta_distance)
+            time.sleep(rate)
+
     def is_serial_open(self):
         return self.ser.is_open
 
     def reconnect(self):
         self.ser.close()
         self.ser = serial.Serial(port, self.baudrate, timeout=1)
+        self.ser = Serial(port, self.baudrate, timeout=1)
 
     def battery_charge(self):
         current  = self.get_sensor(PKT_BATT_CHG)
