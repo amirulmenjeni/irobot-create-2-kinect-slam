@@ -81,10 +81,10 @@ class Robot:
                % (port, self.baudrate))
 
         # Initialize all threads.
+        print('Initializing threads...')
         self.init_threads()
 
     def init_threads(self):
-        print('Initializing threads...')
         self.threads = [
                 threading.Thread(target=Robot.poll_motion, args=(self,),\
                 name='Motion'),\
@@ -150,9 +150,6 @@ class Robot:
         self.send_codes(codes)
         read_buf = self.ser.read(4)
 
-#         print('read_buf len:', len(read_buf))
-#         print('received msg:', read_buf)
-
         return read_buf
 
     def interpret_code(self, packet_id, read_buf):
@@ -189,6 +186,7 @@ class Robot:
 
             else:
                 pass
+
         except struct.error as e:
             print(e)
             print('read_buf:', read_buf)
@@ -207,9 +205,6 @@ class Robot:
         rw = Util.cmsec_to_mmsec(rw)
         max_speed = Util.cmsec_to_mmsec(self.max_speed)
 
-#         print('LW: %s cm/s' % lw)
-#         print('RW: %s cm/s' % rw)
-
             
         # Cap linear speed of each wheel.
         lw = Util.cap(lw, -max_speed, +max_speed)
@@ -217,17 +212,6 @@ class Robot:
 
         lw = Util.cmsec_to_mmsec(lw)
         rw = Util.cmsec_to_mmsec(rw)
-
-            
-        # Cap at (-50, 50) cm/s
-        if lw < -50:
-            lw = -50
-        if lw > 50:
-            lw = 50
-        if rw < -50:
-            rw = -50
-        if rw > 50:
-            rw = 50
 
         rw_high, rw_low = Util.to_twos_comp_2(int(rw))
         lw_high, lw_low = Util.to_twos_comp_2(int(lw))
@@ -278,9 +262,6 @@ class Robot:
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
-
-    def poll_distance_thread(rate=1):
-        pass
 
     def halt(self):
         self.drive_direct(0, 0)
