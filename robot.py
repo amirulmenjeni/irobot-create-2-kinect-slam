@@ -1,9 +1,11 @@
+import sys
 import serial
 import time
 import datetime
 import struct
 import threading
 import numpy as np
+from serial.tools import list_ports
 
 # Opcodes
 START        = chr(128)
@@ -13,10 +15,17 @@ SENSORS      = chr(142)
 DRIVE_DIRECT = chr(145)
 
 # Packets
+PKT_MOTION   = chr(2)  # Group Packet 2, includes Packets 17 to 20.
 PKT_DISTANCE = chr(19)
 PKT_ANGLE    = chr(20)
 PKT_BATT_CHG = chr(25)
 PKT_BATT_CAP = chr(26)
+
+# Packet bytes
+PKT_BYTES = { }
+PKT_BYTES[PKT_MOTION]    = 6
+PKT_BYTES[PKT_DISTANCE] = 2
+PKT_BYTES[PKT_ANGLE]    = 2
 
 # Threads
 THREAD_MOTION = 0
@@ -57,13 +66,21 @@ class Util:
 
         return val * 1000.0
 
-    def cmsec_to_mmsec(val):
+    def mm_to_cm(val):
+        
+        """
+        Simply convert mm to cm.
+        """
+
+        return val * 0.1
+
+    def cm_to_mm(val):
 
         """
-        Simply convert cm/s to mm/s.
+        Simply convert cm to mm.
         """
-            
-        return val * 10
+
+        return val * 10.0
 
     def cap(val, smallest, highest):
         
@@ -79,19 +96,88 @@ class Util:
 
 class Kinematics:
 
-    def __init__(self, robot):
-        self.theta = 0
+    def __init__(self, b):
 
         """
         Initialize the kinematics of this robot and consequently establish its
         intertial frame.
+
+        Parameters:
+            b: The distance between the middle point of the two wheels and each
+               individual wheels in cm.
+        """
+        
+        # The inertial frame.
+        self.INERTIAL_FRAME = np.transpose(np.array([1, 1, 1]))
+
+        self.__b = b
+
+    def inverse(self, targ_v, targ_a):
+
+        """
+        Returns the required setpoint speed for each individual wheel to achieve
+        the target speed and the target rotational speed of robot. Returns a
+        2-tuple: indexed 0 and 1 for the speed of the left and right wheel
+        respectively.
+
+        Parameters:
+            targ_v: The desired velocity of the chassis of the robot.
+            targ_a: The desired change in orientation of the chassis of the
+                    robot.
+
+        v_1 = v - b * theta_dot
+        v_2 = v + b * theta_dot
         """
 
-        self.robot = robot
+        return (targ_v - self.__b * targ_a, targ_v + self.__b * targ_a)
+
+    def forward(self, v1, v2):
+        
+        """
+        Returns the setpoint motion given the issued linear wheel velocity v1
+        and v2 of the left and right wheel respectively.
+
+        Parameters:
+            v1: The linear velocity of the left wheel local to the left wheel's
+                frame.
+            v2: The linear velocity of the right wheel local to the right
+                wheel's frame.
+        """
+
+        v = (v1 + v2) / 2
+        w = (v1 - v2) / (2 * self.__b)
+
+        return v, w
+
+    def update(self, ins_speed, ins_ang_vel):
+        pass
+
+class PIDControler:
+
+    def __init__(self, kp, ki, kd):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.__prev_error = 0
+        self.__error = 0
+        self.__setpoint = 0
+        self.__integral = 0
+
+    def e(self, sp, pv):
+        self.__prev_error = self.__error
+        self.__error = sp - pv
+
+    def P(self):
+        return self.kp * self.__error
+
+    def I(self, dt):
+        return self.ki * (self.__integral + self.__error * dt)
+
+    def D(self, dt):
+        derivative = (self.__error - self.__prev_error) / dt
+        return self.kd* derivative
 
 class Robot:
 
-    def __init__(self, port, max_speed=10):
+    def __init__(self, port='', max_speed=10):
 
         """
         Initialize the Robot class. 
@@ -104,14 +190,40 @@ class Robot:
 
         # Serial variables.
         self.baudrate=57600
+
+        # If port is not explicitly given, do an automatic port look-up of
+        # a USB serial port.
+        if port == '':
+            try:
+                port = self.ports_lookup()[0]
+                print('Found port:', port)
+            except:
+                sys.exit('ERROR: No USB serial port found.')
+
         self.port = port
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
+
+        # Store issued command variables.
+        self.issued_v = 0
+        self.issued_w = 0
 
         # Kinematics variables.
         self.instant_speed = 0
         self.instant_ang_vel = 0
         self.max_speed = max_speed # in cm/s
         self.motion = np.zeros((3, 1))
+        self.kinematics = Kinematics(5)
+
+        self.sum_speed = 0
+        self.count_speed = 0
+
+        # PID controllers.
+        self.pid_v = PIDControler(1.05, 0.3, 0.1)
+        self.pid_w = PIDControler(2, 1, 1)
+
+        # Flags.
+        self.is_pid_enable = True
+        self.is_drive = False
 
         print('Time initialized:', datetime.datetime.now())
         print('Connecting via serial port %s with %s baud.'\
@@ -120,6 +232,24 @@ class Robot:
         # Initialize all threads.
         print('Initializing threads...')
         self.init_threads()
+
+    def ports_lookup(self):
+
+        """
+        Automatic lookup of the roomba serial port device. If no USB serial port
+        device is found, return False. Otherwise, the USB serial port(s) found
+        will be returned in a list.
+        """
+
+        roomba_ports = [
+            p.device
+            for p in list_ports.comports()
+        ]
+
+        if len(roomba_ports) == 0:
+            raise
+
+        return roomba_ports
 
     def init_threads(self):
 
@@ -206,7 +336,6 @@ class Robot:
         for c in codes:
            self.send_code(c)
 
-
     def recv_code(self, packet_id):
         
         """
@@ -216,7 +345,7 @@ class Robot:
 
         codes = [SENSORS, packet_id]
         self.send_codes(codes)
-        read_buf = self.ser.read(4)
+        read_buf = self.ser.read(PKT_BYTES[packet_id])
 
         return read_buf
 
@@ -228,12 +357,29 @@ class Robot:
         """
 
         try:
+            if packet_id == PKT_MOTION:
+
+                distance = struct.unpack('>i',
+                        b'\x00\x00' + read_buf[2:4])[0]
+                angle = struct.unpack('>i',
+                        b'\x00\x00' + read_buf[4:6])[0]
+
+                distance = Util.from_twos_comp_to_signed_int(distance, byte=2)
+                angle = Util.from_twos_comp_to_signed_int(angle, byte=2)
+
+                distance = Util.mm_to_cm(distance)
+
+                return distance, angle
+
             if packet_id == PKT_DISTANCE:
                 
                 # The buffer received from PKT_DISTANCE is 2 bytes, but
-                # struct.unpack requires 4 bytes to convert it to float.
+                # struct.unpack requires 4 bytes to convert it to float
+                # (hence it's prepended with b'\x00\x00').
                 # Convert the 2 bytes binary data to integer data. This integer
                 # data represents distance in mm.
+                #
+                # ">i" means the buffer is read as signed int, big endian.
                 i = struct.unpack('>i', b'\x00\x00' + read_buf)[0]
 
                 # Maximum of the integer value replied for this packet.
@@ -242,7 +388,7 @@ class Robot:
                 i = Util.from_twos_comp_to_signed_int(i, byte=2)
 
                 # Convert from mm/s to cm/s
-                return i / 10.0
+                return Util.mm_to_cm(i)
 
             if packet_id == PKT_ANGLE:
                 i = struct.unpack('>i', b'\x00\x00' + read_buf)[0]
@@ -250,6 +396,7 @@ class Robot:
                 return i
 
             if packet_id == PKT_BATT_CHG:
+                # ">I" means the buffer is read as unsigned int, big endian.
                 i = struct.unpack('>I', b'\x00\x00' + read_buf)[0]
                 return i
 
@@ -261,9 +408,10 @@ class Robot:
                 pass
 
         except struct.error as e:
-            print(e)
-            print('read_buf:', read_buf)
-            print('length:', len(read_buf))
+            pass
+            # print(e)
+            # print('read_buf:', read_buf)
+            # print('length:', len(read_buf))
 
         return 0.0
 
@@ -274,17 +422,13 @@ class Robot:
         """
 
         # Convert variables from cm/s to mm/s.
-        lw = Util.cmsec_to_mmsec(lw)
-        rw = Util.cmsec_to_mmsec(rw)
-        max_speed = Util.cmsec_to_mmsec(self.max_speed)
+        max_speed = Util.cm_to_mm(self.max_speed)
+        lw = Util.cm_to_mm(lw)
+        rw = Util.cm_to_mm(rw)
 
-            
         # Cap linear speed of each wheel.
         lw = Util.cap(lw, -max_speed, +max_speed)
         rw = Util.cap(rw, -max_speed, +max_speed)
-
-        lw = Util.cmsec_to_mmsec(lw)
-        rw = Util.cmsec_to_mmsec(rw)
 
         rw_high, rw_low = Util.to_twos_comp_2(int(rw))
         lw_high, lw_low = Util.to_twos_comp_2(int(lw))
@@ -295,6 +439,22 @@ class Robot:
                  chr(lw_high), chr(lw_low)]
             
         self.send_codes(codes)
+
+    def drive(self, vel_forward, vel_angular, is_feedback=False):
+
+        """
+        Drive the robot given its local forward velocity and its angular
+        velocity (in radian per seconds.).
+        """
+        
+        if not is_feedback:
+            self.issued_v = vel_forward
+            self.issued_w = vel_angular 
+            self.is_drive = True
+
+        v1, v2 = self.kinematics.inverse(vel_forward, vel_angular)
+        self.drive_direct(v1, v2)
+
 
     def stop_thread(self, i):
         
@@ -312,7 +472,7 @@ class Robot:
     def stop_all_threads(self):
 
         """
-        Simply stop al threads. See stop_thread.
+        Simply stop all threads. See stop_thread.
         """
 
         for i in range(0, len(self.threads)):
@@ -343,21 +503,33 @@ class Robot:
     def poll_motion(self):
 
         """
-        Updates the Robot variables that defines its motion: instant_speed, 
-        instant_ang_vel
+        Updates the Robot variables that defines its motion.
         """
-        n = 2 # The number of motion variables.
 
+        delta_time = 0.5
         while True:
-            delta_time = time.time()
-            delta_distance = self.get_sensor(PKT_DISTANCE)
-            delta_time = time.time() - delta_time
-            self.instant_speed = float(delta_distance / (delta_time * n))
 
-            delta_time = time.time()
-            delta_angle = self.get_sensor(PKT_ANGLE)
-            delta_time = time.time() - delta_time
-            self.instant_ang_vel = float(delta_angle / (delta_time * n))
+            self.get_sensor(PKT_MOTION)
+            time.sleep(delta_time)
+            delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+
+            v = delta_distance / delta_time # Forward velocity
+            w = delta_angle / delta_time    # Change in orientation
+
+            if self.is_drive:
+                print('->', (v, w))
+
+            if self.is_pid_enable:
+                self.pid_v.e(self.issued_v, v)
+                self.pid_w.e(self.issued_w, w)
+
+                pout_v = v + self.pid_v.P()
+                pout_w = w 
+
+                if self.is_drive:
+                    print('out v, w:', pout_v, pout_w)
+
+                self.drive(pout_v, pout_w, is_feedback=True)
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -369,8 +541,9 @@ class Robot:
         function and setting each wheel's linear speed to zero.
         """
 
-        self.drive_direct(0, 0)
-    
+        self.drive(0, 0)
+        self.is_drive = False
+
     def test_song(self):
 
         """
@@ -457,5 +630,22 @@ class Robot:
         """
 
         return self.interpret_code(packet_id, self.recv_code(packet_id))
+
+    def record_speed(self):
+        self.sum_speed = self.sum_speed + self.instant_speed
+        self.count_speed = self.count_speed + 1
+        return self.instant_speed
+        
+    def get_avg_speed(self):
+        res = self.sum_speed / self.count_speed
+        self.sum_speed = 0
+        self.count_speed = 0
+        return res
+
+    def enable_pid(self):
+        self.is_pid_enable = True
+        
+    def disable_pid(self):
+        self.is_pid_enable = False
 
 
