@@ -4,6 +4,7 @@ import time
 import datetime
 import struct
 import threading
+import math
 import numpy as np
 from serial.tools import list_ports
 
@@ -103,14 +104,14 @@ class Kinematics:
         intertial frame.
 
         Parameters:
-            b: The distance between the middle point of the two wheels and each
-               individual wheels in cm.
+            b: The axial distance between the wheels of the differential drive
+               mobile robot.
         """
         
-        # The inertial frame.
-        self.INERTIAL_FRAME = np.transpose(np.array([1, 1, 1]))
-
         self.__b = b
+        self.__orientation = 0
+        self.__x_position = 0
+        self.__y_position = 0
 
     def inverse(self, targ_v, targ_a):
 
@@ -149,8 +150,34 @@ class Kinematics:
 
         return v, w
 
-    def update(self, ins_speed, ins_ang_vel):
-        pass
+    def update_cartesian_position(self, delta_distance, delta_angle):
+
+        """
+        Updates the cartesian coordinate position of the robot chassis in the
+        inertial reference frame. This assumes the delta distance and delta
+        angle given is taken at a consistent time ticks.
+
+        Parameters:
+            delta_distance: 
+                The distance traveled within a consistent time tick.
+            delta_angle:
+                The change in angle within a consistent time tick.
+        """
+
+        self.__orientation = (self.__orientation + delta_angle) % 360
+
+        radian = (math.pi / 180.0) * (self.__orientation + delta_angle)
+
+        self.__x_position += delta_distance * math.cos(radian)
+        self.__y_position +=  delta_distance * math.sin(radian)
+
+    def get_position(self):
+
+        """
+        Returns the position of the robot in the inertial reference frame in
+        cartesian coordinate form.
+        """
+        return (self.__x_position, self.__y_position)
 
 class PIDControler:
 
@@ -169,11 +196,12 @@ class PIDControler:
         return self.kp * self.__error
 
     def I(self, dt):
-        return self.ki * (self.__integral + self.__error * dt)
+        self.__integral = self.ki * (self.__integral + self.__error * dt)
+        return self.__integral
 
     def D(self, dt):
         derivative = (self.__error - self.__prev_error) / dt
-        return self.kd* derivative
+        return self.kd * derivative
 
 class Robot:
 
@@ -207,30 +235,23 @@ class Robot:
         self.issued_v = 0
         self.issued_w = 0
 
+        # Reading of linear and angular velocity of the robot chassis.
+        self.__v = 0
+        self.__w = 0
+
         # Kinematics variables.
-        self.instant_speed = 0
-        self.instant_ang_vel = 0
         self.max_speed = max_speed # in cm/s
-        self.motion = np.zeros((3, 1))
         self.kinematics = Kinematics(5)
 
-        self.sum_speed = 0
-        self.count_speed = 0
-
         # PID controllers.
-        self.pid_v = PIDControler(1.05, 0.3, 0.1)
-        self.pid_w = PIDControler(2, 1, 1)
+        self.pid_v = PIDControler(0.00, 0.01, 0.01)
+        self.pid_w = PIDControler(0.01, 0.01, 0.01)
 
         # Flags.
         self.is_pid_enable = True
         self.is_drive = False
 
-        print('Time initialized:', datetime.datetime.now())
-        print('Connecting via serial port %s with %s baud.'\
-               % (port, self.baudrate))
-
         # Initialize all threads.
-        print('Initializing threads...')
         self.init_threads()
 
     def ports_lookup(self):
@@ -364,6 +385,7 @@ class Robot:
                 angle = struct.unpack('>i',
                         b'\x00\x00' + read_buf[4:6])[0]
 
+                # Distance in mm, angle in degrees.
                 distance = Util.from_twos_comp_to_signed_int(distance, byte=2)
                 angle = Util.from_twos_comp_to_signed_int(angle, byte=2)
 
@@ -455,7 +477,6 @@ class Robot:
         v1, v2 = self.kinematics.inverse(vel_forward, vel_angular)
         self.drive_direct(v1, v2)
 
-
     def stop_thread(self, i):
         
         """
@@ -507,6 +528,7 @@ class Robot:
         """
 
         delta_time = 0.5
+
         while True:
 
             self.get_sensor(PKT_MOTION)
@@ -516,20 +538,14 @@ class Robot:
             v = delta_distance / delta_time # Forward velocity
             w = delta_angle / delta_time    # Change in orientation
 
-            if self.is_drive:
-                print('->', (v, w))
+            self.__v = v
+            self.__w = w
 
-            if self.is_pid_enable:
-                self.pid_v.e(self.issued_v, v)
-                self.pid_w.e(self.issued_w, w)
+            self.kinematics.update_cartesian_position(\
+                    delta_distance, delta_angle)
 
-                pout_v = v + self.pid_v.P()
-                pout_w = w 
-
-                if self.is_drive:
-                    print('out v, w:', pout_v, pout_w)
-
-                self.drive(pout_v, pout_w, is_feedback=True)
+            # if self.is_drive:
+            #     print('->', (v, w), self.kinematics.get_position())
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -631,16 +647,22 @@ class Robot:
 
         return self.interpret_code(packet_id, self.recv_code(packet_id))
 
-    def record_speed(self):
-        self.sum_speed = self.sum_speed + self.instant_speed
-        self.count_speed = self.count_speed + 1
-        return self.instant_speed
-        
-    def get_avg_speed(self):
-        res = self.sum_speed / self.count_speed
-        self.sum_speed = 0
-        self.count_speed = 0
-        return res
+    def get_motion(self):
+
+        """
+        Returns the linear and angular velocity of the robot.
+        """
+
+        return (self.__v, self.__w)
+
+    def get_position(self):
+
+        """
+        Returns the position of the robot in cartesian coordinate of in the
+        inertial reference frame.
+        """
+
+        return self.kinematics.get_position()
 
     def enable_pid(self):
         self.is_pid_enable = True
