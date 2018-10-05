@@ -15,7 +15,6 @@ curses.cbreak()
 # previous state.
 def main(stdscr, robot):
     
-    stdscr.clear()
     stdscr.nodelay(True)
 
     is_reverse = False
@@ -26,9 +25,14 @@ def main(stdscr, robot):
     while True:
         try:
 
+
+            stdscr.refresh()
             stdscr.addstr(0, 0, 'issued v, w: ' + str((v, w)))
+            stdscr.clrtobot()
             stdscr.addstr(1, 0, 'read   v, w: ' + str(robot.get_motion()))
-            stdscr.addstr(2, 0, 'position   : ' + str(robot.get_position()))
+            stdscr.clrtobot()
+            stdscr.addstr(2, 0, 'position   : ' + str(robot.get_pose()))
+            stdscr.clrtobot()
 
             c = stdscr.getch()
 
@@ -85,11 +89,8 @@ def main(stdscr, robot):
             # No input.
             pass
 
-    stdscr.refresh()
-    stdscr.getkey()
-
 # Initialize robot, automatically find and connect the serial port.
-r = Robot() 
+r = Robot(26) 
 curses.wrapper(main, r)
 
 # Terminate curses application.

@@ -95,90 +95,6 @@ class Util:
             return highest
         return val
 
-class Kinematics:
-
-    def __init__(self, b):
-
-        """
-        Initialize the kinematics of this robot and consequently establish its
-        intertial frame.
-
-        Parameters:
-            b: The axial distance between the wheels of the differential drive
-               mobile robot.
-        """
-        
-        self.__b = b
-        self.__orientation = 0
-        self.__x_position = 0
-        self.__y_position = 0
-
-    def inverse(self, targ_v, targ_a):
-
-        """
-        Returns the required setpoint speed for each individual wheel to achieve
-        the target speed and the target rotational speed of robot. Returns a
-        2-tuple: indexed 0 and 1 for the speed of the left and right wheel
-        respectively.
-
-        Parameters:
-            targ_v: The desired velocity of the chassis of the robot.
-            targ_a: The desired change in orientation of the chassis of the
-                    robot.
-
-        v_1 = v - b * theta_dot
-        v_2 = v + b * theta_dot
-        """
-
-        return (targ_v - self.__b * targ_a, targ_v + self.__b * targ_a)
-
-    def forward(self, v1, v2):
-        
-        """
-        Returns the setpoint motion given the issued linear wheel velocity v1
-        and v2 of the left and right wheel respectively.
-
-        Parameters:
-            v1: The linear velocity of the left wheel local to the left wheel's
-                frame.
-            v2: The linear velocity of the right wheel local to the right
-                wheel's frame.
-        """
-
-        v = (v1 + v2) / 2
-        w = (v1 - v2) / (2 * self.__b)
-
-        return v, w
-
-    def update_cartesian_position(self, delta_distance, delta_angle):
-
-        """
-        Updates the cartesian coordinate position of the robot chassis in the
-        inertial reference frame. This assumes the delta distance and delta
-        angle given is taken at a consistent time ticks.
-
-        Parameters:
-            delta_distance: 
-                The distance traveled within a consistent time tick.
-            delta_angle:
-                The change in angle within a consistent time tick.
-        """
-
-        self.__orientation = (self.__orientation + delta_angle) % 360
-
-        radian = (math.pi / 180.0) * (self.__orientation + delta_angle)
-
-        self.__x_position += delta_distance * math.cos(radian)
-        self.__y_position +=  delta_distance * math.sin(radian)
-
-    def get_position(self):
-
-        """
-        Returns the position of the robot in the inertial reference frame in
-        cartesian coordinate form.
-        """
-        return (self.__x_position, self.__y_position)
-
 class PIDControler:
 
     def __init__(self, kp, ki, kd):
@@ -205,7 +121,7 @@ class PIDControler:
 
 class Robot:
 
-    def __init__(self, port='', max_speed=10):
+    def __init__(self, b, port='', max_speed=10):
 
         """
         Initialize the Robot class. 
@@ -213,7 +129,12 @@ class Robot:
         port: The serial port to connect with the iRobot Create e.g.
         '/dev/ttyUSB0'.
 
-        max_speed: The maximum speed each wheel can attain in cm/s.
+        @param b:
+            The axial distance between the wheels in cm.
+        @param port:
+            The serial port used to send messages to the robot.
+        @param max_speed:
+            The maximum speed each wheel can attain in cm/s.
         """
 
         # Serial variables.
@@ -228,7 +149,8 @@ class Robot:
             except:
                 sys.exit('ERROR: No USB serial port found.')
 
-        self.port = port
+        self.__b = b
+        self.__port = port
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
 
         # Store issued command variables.
@@ -241,7 +163,10 @@ class Robot:
 
         # Kinematics variables.
         self.max_speed = max_speed # in cm/s
-        self.kinematics = Kinematics(5)
+
+        # The position and orientation of the robot w.r.t global reference
+        # frame.
+        self.__pose = (0, 0, 0)
 
         # PID controllers.
         self.pid_v = PIDControler(0.00, 0.01, 0.01)
@@ -279,7 +204,7 @@ class Robot:
         """
 
         self.threads = [
-                threading.Thread(target=Robot.poll_motion, args=(self,),\
+                threading.Thread(target=Robot.thread_motion, args=(self,),\
                 name='Motion'),\
         ]
 
@@ -467,6 +392,9 @@ class Robot:
         """
         Drive the robot given its local forward velocity and its angular
         velocity (in radian per seconds.).
+
+        NOTE: This only update the issued_v and issued_w of the robot. The
+        actual command is issued in thread_motion().
         """
         
         if not is_feedback:
@@ -474,8 +402,18 @@ class Robot:
             self.issued_w = vel_angular 
             self.is_drive = True
 
-        v1, v2 = self.kinematics.inverse(vel_forward, vel_angular)
-        self.drive_direct(v1, v2)
+        # v1 = vel_forward - self.__b * vel_angular
+        # v2 = vel_forward + self.__b * vel_angular
+        # self.drive_direct(v1, v2)
+
+    def drive_to(self, x, y):
+
+        """
+        Drive the robot to position (x, y) in the global reference frame.
+        """
+        
+        pass
+
 
     def stop_thread(self, i):
         
@@ -521,10 +459,10 @@ class Robot:
         if not self.threads[i].is_alive():
             self.threads[i].start()
 
-    def poll_motion(self):
+    def thread_motion(self):
 
         """
-        Updates the Robot variables that defines its motion.
+        Keep reading the encoder values on the robot's pose.
         """
 
         delta_time = 0.5
@@ -535,17 +473,22 @@ class Robot:
             time.sleep(delta_time)
             delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
 
+            # Compute the linear and angular velocity from measured distance and
+            # angle within delta_time respectively.
             v = delta_distance / delta_time # Forward velocity
             w = delta_angle / delta_time    # Change in orientation
 
+            # Update linear and angular velocity member variables.
             self.__v = v
             self.__w = w
 
-            self.kinematics.update_cartesian_position(\
-                    delta_distance, delta_angle)
+            # Update the position of the robot.
+            self.__update_position(delta_distance, delta_angle)
 
-            # if self.is_drive:
-            #     print('->', (v, w), self.kinematics.get_position())
+            # Get v1 and v2 based on given v and w.
+            v1 = self.issued_v - self.__b * self.issued_w
+            v2 = self.issued_v + self.__b * self.issued_w
+            self.drive_direct(v1, v2)
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -655,19 +598,45 @@ class Robot:
 
         return (self.__v, self.__w)
 
-    def get_position(self):
+    def get_pose(self):
 
         """
         Returns the position of the robot in cartesian coordinate of in the
         inertial reference frame.
         """
 
-        return self.kinematics.get_position()
+        return self.__pose
 
     def enable_pid(self):
         self.is_pid_enable = True
         
     def disable_pid(self):
         self.is_pid_enable = False
+
+    def __update_position(self, delta_distance, delta_angle):
+
+        """
+        Updates the cartesian coordinate position of the robot chassis in the
+        inertial reference frame. This assumes the delta distance and delta
+        angle given is taken at a consistent time ticks.
+
+        Parameters:
+            delta_distance: 
+                The distance traveled within a consistent time tick.
+            delta_angle:
+                The change in angle within a consistent time tick.
+        """
+
+        # Update orientation.
+        orientation = (self.__pose[2] + delta_angle) % 360
+
+        # Convert the orientation from degree to radian for the next operations.
+        radian = (math.pi / 180.0) * (orientation + delta_angle)
+
+        # Update x- and y-positon.
+        x = self.__pose[0] + delta_distance * math.cos(radian)
+        y = self.__pose[1] + delta_distance * math.sin(radian)
+
+        self.__pose = (x, y, orientation)
 
 
