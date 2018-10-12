@@ -24,7 +24,7 @@ PKT_BATT_CAP = chr(26)
 
 # Packet bytes
 PKT_BYTES = { }
-PKT_BYTES[PKT_MOTION]    = 6
+PKT_BYTES[PKT_MOTION]   = 6
 PKT_BYTES[PKT_DISTANCE] = 2
 PKT_BYTES[PKT_ANGLE]    = 2
 
@@ -95,6 +95,24 @@ class Util:
             return highest
         return val
 
+    def is_in_circle(center, radius, position):
+
+        """
+        Check if a point at a given position is located within a circle. 
+
+        @param center:
+            The center position of the circle. A length-2 tuple.
+        @param radius:
+            The radius of the circle.
+        @param position:
+            A length-2 tuple of the position to be tested.
+        """
+
+        d = math.sqrt(((center[0] - position[0]) ** 2) +\
+                       (center[1] - position[1]) ** 2)
+
+        return d <= radius
+
 class PIDControler:
 
     def __init__(self, kp, ki, kd):
@@ -157,6 +175,8 @@ class Robot:
         self.issued_v = 0
         self.issued_w = 0
 
+        self.__target_orientation = 0
+
         # Reading of linear and angular velocity of the robot chassis.
         self.__v = 0
         self.__w = 0
@@ -175,6 +195,14 @@ class Robot:
         # Flags.
         self.is_pid_enable = True
         self.is_drive = False
+        self.is_autonomous = False
+
+        # Autonomous driving variables.
+        self.__init_v = (0, 0)
+        self.__term_v = (0, 0)
+        self.__init_pos = (0, 0)
+        self.__term_pos = (0, 0)
+        self.__autonomous_t = 0
 
         # Initialize all threads.
         self.init_threads()
@@ -406,15 +434,6 @@ class Robot:
         # v2 = vel_forward + self.__b * vel_angular
         # self.drive_direct(v1, v2)
 
-    def drive_to(self, x, y):
-
-        """
-        Drive the robot to position (x, y) in the global reference frame.
-        """
-        
-        pass
-
-
     def stop_thread(self, i):
         
         """
@@ -485,10 +504,13 @@ class Robot:
             # Update the position of the robot.
             self.__update_position(delta_distance, delta_angle)
 
-            # Get v1 and v2 based on given v and w.
-            v1 = self.issued_v - self.__b * self.issued_w
-            v2 = self.issued_v + self.__b * self.issued_w
-            self.drive_direct(v1, v2)
+            if self.is_autonomous:
+                pass
+
+            else:
+                # Manual driving.
+                v1, v2 = Robot.__inverse_drive(v, w, self.__b)
+                self.drive_direct(v1, v2)
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -639,4 +661,6 @@ class Robot:
 
         self.__pose = (x, y, orientation)
 
+    def __inverse_drive(v, w, b):
 
+        return v - b * w, v + b * w
