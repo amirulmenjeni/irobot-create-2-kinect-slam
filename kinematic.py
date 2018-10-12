@@ -88,9 +88,11 @@ class Trajectory:
             yield x
             x += step
 
-    def plot_trajectory(self, delta_time):
+    def plot_trajectory(self):
 
         temp = self.__i
+
+        delta_time = 1
         
         straight_line_x = []
         straight_line_y = []
