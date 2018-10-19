@@ -6,7 +6,10 @@ import struct
 import threading
 import math
 import numpy as np
+import matplotlib.pyplot as plt 
+import csv
 from serial.tools import list_ports
+from kinematic import Trajectory
 
 # Opcodes
 START        = chr(128)
@@ -17,6 +20,7 @@ DRIVE_DIRECT = chr(145)
 
 # Packets
 PKT_MOTION   = chr(2)  # Group Packet 2, includes Packets 17 to 20.
+PKT_STATUS   = chr(3)  # Group Packet 3, includes Packets 21 to 26.
 PKT_DISTANCE = chr(19)
 PKT_ANGLE    = chr(20)
 PKT_BATT_CHG = chr(25)
@@ -27,6 +31,7 @@ PKT_BYTES = { }
 PKT_BYTES[PKT_MOTION]   = 6
 PKT_BYTES[PKT_DISTANCE] = 2
 PKT_BYTES[PKT_ANGLE]    = 2
+PKT_BYTES[PKT_STATUS]   = 10
 
 # Threads
 THREAD_MOTION = 0
@@ -58,6 +63,10 @@ class Util:
             val = (val ^ ones) + 1
             return -1 * val
         return val
+
+    def from_binary_to_unsigned_int(val):
+
+        pass
 
     def msec_to_mmsec(val):
         
@@ -137,9 +146,159 @@ class PIDControler:
         derivative = (self.__error - self.__prev_error) / dt
         return self.kd * derivative
 
+class StaticPlotter:
+
+    def __init__(self, n, init_pos, style='b-'):
+
+        self.__n = n
+        self.__theta = [0] * n
+        
+        self.__pos_x = [p[0] for p in init_pos]
+        self.__pos_y = [p[1] for p in init_pos]
+
+        self.__dis_x = []
+        self.__dis_y = []
+        for i in range(n):
+            self.__dis_x.append([self.__pos_x[i]])
+            self.__dis_y.append([self.__pos_y[i]])
+
+        self.__styles = ['b-']
+        if style == 'b-':
+            self.__styles = ['b-'] * n
+        else:
+            self.__styles = style
+        print(self.__styles)
+
+        self.__lines = []
+
+        self.__min_x = min(self.__pos_x)
+        self.__max_x = max(self.__pos_x)
+        self.__min_y = min(self.__pos_y)
+        self.__max_y = min(self.__pos_y)
+
+        self.__fig = plt.figure()
+        self.__ax = self.__fig.add_subplot(
+            111, 
+            xlim=[self.__min_x, self.__max_x], 
+            ylim=[self.__min_y, self.__max_y])
+
+
+    def __plot(self, ax, i):
+        return ax.plot(self.__pos_x[i], self.__pos_y[i],\
+            self.__styles[i])[0]
+
+    def update_plot(self, i, delta_distance, delta_angle):
+
+        if i < 0 or i > self.__n:
+            raise ValueError('Invalid line index given.')
+
+        delta_angle = math.radians(delta_angle)
+        self.__theta[i] = self.__theta[i] + delta_angle
+
+        self.__pos_x[i] = self.__pos_x[i] +\
+            delta_distance * math.cos(self.__theta[i])
+        self.__pos_y[i] = self.__pos_y[i] +\
+            delta_distance * math.sin(self.__theta[i])
+
+        if self.__pos_x[i] < self.__min_x:
+            self.__min_x = self.__pos_x[i]
+        if self.__pos_x[i] > self.__max_x:
+            self.__max_x = self.__pos_x[i]
+        if self.__pos_y[i] < self.__min_y:
+            self.__min_y = self.__pos_y[i]
+        if self.__pos_y[i] > self.__max_y:
+            self.__max_y = self.__pos_y[i]
+
+        self.__dis_x[i].append(self.__pos_x[i])
+        self.__dis_y[i].append(self.__pos_y[i])
+
+    def draw(self):
+
+        self.__ax.set_xlim(xmin=self.__min_x, xmax=self.__max_x)
+        self.__ax.set_ylim(ymin=self.__min_y, ymax=self.__max_y)
+
+        for i in range(self.__n):
+            self.__ax.plot(self.__dis_x[i], self.__dis_y[i], self.__styles[i])
+        plt.grid()
+        plt.show()
+
+class AnimPlotter:
+
+    def __init__(self, n, init_pos, style='b-'):
+
+        self.__n = n
+        self.__theta = [0] * n
+        
+        print('theta:', self.__theta)
+
+        self.__pos_x = [p[0] for p in init_pos]
+        self.__pos_y = [p[1] for p in init_pos]
+
+        print('pos_x:', self.__pos_x)
+        print('pos_y:', self.__pos_y)
+
+        self.__dis_x = []
+        self.__dis_y = []
+        for i in range(n):
+            self.__dis_x.append([self.__pos_x[i]])
+            self.__dis_y.append([self.__pos_y[i]])
+
+        print('dis_x:', self.__dis_x)
+        print('dis_y:', self.__dis_y)
+
+        self.__styles = ['b-']
+        if style == 'b-':
+            self.__styles = ['b-'] * n
+        else:
+            self.__styles = style
+
+        print('styles:', self.__styles)
+
+        self.__lines = []
+
+        self.__fig = plt.figure()
+        self.__ax = self.__fig.add_subplot(
+            111, xlim=[0, 200], ylim=[0, 200])
+
+        self.__fig.show()
+        self.__fig.canvas.draw()
+
+        self.__lines = [self.__ax.plot(self.__dis_x[i], self.__dis_y[i], 
+            self.__styles, animated=True)[0] for i in range(n)]
+
+        print('lines:', self.__lines)
+
+        self.__background = self.__fig.canvas.copy_from_bbox(self.__ax.bbox)
+
+    def update_plot(self, i, delta_distance, delta_angle):
+
+        if i < 0 or i > self.__n:
+            raise ValueError('Invalid line index given.')
+
+        delta_angle = math.radians(delta_angle)
+        self.__theta[i] = self.__theta[i] + delta_angle
+
+        self.__pos_x[i] = self.__pos_x[i] +\
+            delta_distance * math.cos(self.__theta[i])
+        self.__pos_y[i] = self.__pos_y[i] +\
+            delta_distance * math.sin(self.__theta[i])
+
+        self.__dis_x[i].append(self.__pos_x[i])
+        self.__dis_y[i].append(self.__pos_y[i])
+
+    def draw(self):
+
+        self.__fig.canvas.restore_region(self.__background)
+        for i, line in enumerate(self.__lines):
+            line.set_xdata(self.__dis_x[i])
+            line.set_ydata(self.__dis_y[i])
+            self.__ax.draw_artist(line)
+            self.__fig.canvas.blit(self.__ax.bbox)
+        self.__fig.canvas.flush_events()
+
 class Robot:
 
-    def __init__(self, b, port='', max_speed=10):
+    def __init__(self, b=26, port='', max_speed=10):
 
         """
         Initialize the Robot class. 
@@ -180,6 +339,8 @@ class Robot:
         # Reading of linear and angular velocity of the robot chassis.
         self.__v = 0
         self.__w = 0
+        self.__delta_distance = 0
+        self.__delta_angle = 0
 
         # Kinematics variables.
         self.max_speed = max_speed # in cm/s
@@ -198,11 +359,15 @@ class Robot:
         self.is_autonomous = False
 
         # Autonomous driving variables.
-        self.__init_v = (0, 0)
-        self.__term_v = (0, 0)
-        self.__init_pos = (0, 0)
-        self.__term_pos = (0, 0)
-        self.__autonomous_t = 0
+        self.auto_trajectory = None
+        self.auto_timestep = 0
+        self.auto_end_time = 0
+        self.auto_t0 = 0
+
+        self.plotter = StaticPlotter(2,
+            [self.get_pose()[:2]] * 2, ['kx--', 'cx--'])
+
+        self.__is_timestep_end = False
 
         # Initialize all threads.
         self.init_threads()
@@ -246,6 +411,9 @@ class Robot:
             else:
                 thread.start()
                 print('Thread "%s" started' % thread.name)
+
+    def clean_up(self):
+        self.stop_all_threads()
 
     def start(self):
 
@@ -346,10 +514,25 @@ class Robot:
 
                 return distance, angle
 
+            if packet_id == PKT_STATUS:
+
+                charge = struct.unpack('>i',
+                        b'\x00\x00' + read_buf[7:9])[0]
+                capacity = struct.unpack('>i',
+                        b'\x00\x00' + read_buf[9:11])[0]
+
+                print('charge:', charge)
+                print('capacity:', capacity)
+
+                charge = int(charge, 2)
+                capacity = int(capacity, 2)
+
+                return charge, capacity
+
             if packet_id == PKT_DISTANCE:
                 
                 # The buffer received from PKT_DISTANCE is 2 bytes, but
-                # struct.unpack requires 4 bytes to convert it to float
+                # struct.unpack requires 4 bytes to convert it to integer
                 # (hence it's prepended with b'\x00\x00').
                 # Convert the 2 bytes binary data to integer data. This integer
                 # data represents distance in mm.
@@ -434,6 +617,46 @@ class Robot:
         # v2 = vel_forward + self.__b * vel_angular
         # self.drive_direct(v1, v2)
 
+    def drive_to(self, speed, next_pos, targ_orientation=None):
+
+        print('Drive from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f).' %\
+                (self.__pose[0], self.__pose[1], self.__pose[2],
+                 targ_pos[0], next_pos[1], targ_orientation))
+
+        self.auto_trajectory = Trajectory(speed, 
+            self.__pose[:2], self.__pose[2],
+            next_pos, targ_orientation)
+
+        print('Start autonomous driving.')
+        self.is_autonomous = True
+        self.is_drive = True
+        self.auto_timestep = 0
+        self.auto_t0 = 0
+
+    def drive_trajectory(self, speed, waypoints, targ_orientation=None):
+
+        self.auto_trajectory = Trajectory(speed,
+            self.__pose[:2], self.__pose[2],
+            waypoints[0], targ_orientation)
+
+        if len(waypoints) > 1:
+            for i in range(1, len(waypoints)):
+                x, y = waypoints[i]
+                self.auto_trajectory.add_waypoint(x, y)
+
+        time_estimate =\
+            self.auto_trajectory.estimate_time_between_points(
+                self.auto_trajectory.get_speed(),
+                self.auto_trajectory.current())
+        self.auto_end_time = time_estimate
+
+        print('wp:', self.auto_trajectory.get_waypoints())
+
+        self.is_autonomous = True
+        self.is_drive = True
+        self.auto_timestep = 0
+        self.auto_t0 = 0
+
     def stop_thread(self, i):
         
         """
@@ -488,14 +711,26 @@ class Robot:
 
         while True:
 
-            self.get_sensor(PKT_MOTION)
+            delta_distance, delta_angle = 0, 0
+            try:
+                self.get_sensor(PKT_MOTION)
+            except:
+                pass
             time.sleep(delta_time)
-            delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
-
+            try:
+                delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+            except:
+                pass
             # Compute the linear and angular velocity from measured distance and
             # angle within delta_time respectively.
             v = delta_distance / delta_time # Forward velocity
-            w = delta_angle / delta_time    # Change in orientation
+            w = delta_angle / delta_time    # Change in orientation (degree)
+
+            self.__delta_distance = delta_distance
+            self.__delta_angle = delta_angle
+
+            if self.is_drive:
+                print('v, w:', v, w)
 
             # Update linear and angular velocity member variables.
             self.__v = v
@@ -504,16 +739,59 @@ class Robot:
             # Update the position of the robot.
             self.__update_position(delta_distance, delta_angle)
 
+
+            v1, v2 = 0, 0
+
             if self.is_autonomous:
-                pass
+
+                v, w = self.auto_trajectory.motion(
+                    self.auto_timestep - self.auto_t0)
+
+                v1, v2 = Robot.__inverse_drive(v, w, self.__b)
+                # print('[%s] auto v, w:' % (self.auto_timestep), v, w)
+                # print('[%s] autov1,v2:' % (self.auto_timestep), v1, v2)
+
+                self.plotter.update_plot(0, delta_distance, delta_angle)
+                self.plotter.update_plot(1, v * delta_time,
+                    math.degrees(w) * delta_time)
+
+                if self.auto_timestep >= self.auto_end_time:
+                    self.test_song()
+                    self.auto_trajectory.next()
+
+                    if self.auto_trajectory.is_final_waypoint():
+                        self.is_autonomous = False
+                        self.auto_timestep = 0
+                        v1, v2 = 0, 0
+                    else:
+                        time_estimate =\
+                            self.auto_trajectory.estimate_time_between_points(
+                                self.auto_trajectory.get_speed(),
+                                self.auto_trajectory.current())
+                        self.auto_end_time = self.auto_end_time + time_estimate 
+                        self.auto_t0 = self.auto_timestep
+                else:
+                    self.auto_timestep = self.auto_timestep + delta_time
+
+                    next_waypoint = self.auto_trajectory.next_waypoint()
+                    if Util.is_in_circle(next_waypoint, 0.5, self.__pose[:2]):
+                        print('End auto pilot. Destination reached.')
+                        self.is_autonomous = False
+                        self.auto_timestep = 0
 
             else:
                 # Manual driving.
-                v1, v2 = Robot.__inverse_drive(v, w, self.__b)
-                self.drive_direct(v1, v2)
+                v1, v2 = Robot.__inverse_drive(
+                    self.issued_v, self.issued_w, self.__b)
+
+            self.drive_direct(v1, v2)
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
+
+    def wait_for_next_timestep(self):
+        while not self.__is_timestep_end:
+            time.sleep(0.01)
 
     def halt(self):
 
@@ -524,6 +802,8 @@ class Robot:
 
         self.drive(0, 0)
         self.is_drive = False
+        self.is_autonomous = False
+        self.auto_timestep = 0
 
     def test_song(self):
 
@@ -591,16 +871,8 @@ class Robot:
         Returns the value of the current battery percentage.
         """
 
-        current  = self.get_sensor(PKT_BATT_CHG)
-
-        # Avoid division by zero error. 
-        timeout = time.time()
-        while capacity == 0.0 and timeout < 5.0:
-            capacity = self.get_sensor(PKT_BATT_CAP)
-            timeout = time.time() - timeout
-            time.sleep(0.2)
-
-        return float(current / capacity)
+        charge, capacity = self.get_sensor(PKT_STATUS)
+        return float(charge / capacity)
 
     def get_sensor(self, packet_id):
 
@@ -629,6 +901,16 @@ class Robot:
 
         return self.__pose
 
+    def reset_pose(self):
+
+        self.__pose = (0, 0, 0)
+
+    def get_delta_distace(self):
+        return self.__delta_distance
+
+    def get_delta_angle(self):
+        return self.__delta_angle
+
     def enable_pid(self):
         self.is_pid_enable = True
         
@@ -652,8 +934,9 @@ class Robot:
         # Update orientation.
         orientation = (self.__pose[2] + delta_angle) % 360
 
-        # Convert the orientation from degree to radian for the next operations.
-        radian = (math.pi / 180.0) * (orientation + delta_angle)
+        # Convert the orientation from degree to radian for the next operations
+        # (determining the x- and y-positon).
+        radian = (math.pi / 180.0) * orientation
 
         # Update x- and y-positon.
         x = self.__pose[0] + delta_distance * math.cos(radian)
