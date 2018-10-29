@@ -324,80 +324,6 @@ class StaticPlotter:
         plt.grid()
         plt.show()
 
-class AnimPlotter:
-
-    def __init__(self, n, init_pos, style='b-'):
-
-        self.__n = n
-        self.__theta = [0] * n
-        
-        print('theta:', self.__theta)
-
-        self.__pos_x = [p[0] for p in init_pos]
-        self.__pos_y = [p[1] for p in init_pos]
-
-        print('pos_x:', self.__pos_x)
-        print('pos_y:', self.__pos_y)
-
-        self.__dis_x = []
-        self.__dis_y = []
-        for i in range(n):
-            self.__dis_x.append([self.__pos_x[i]])
-            self.__dis_y.append([self.__pos_y[i]])
-
-        print('dis_x:', self.__dis_x)
-        print('dis_y:', self.__dis_y)
-
-        self.__styles = ['b-']
-        if style == 'b-':
-            self.__styles = ['b-'] * n
-        else:
-            self.__styles = style
-
-        print('styles:', self.__styles)
-
-        self.__lines = []
-
-        self.__fig = plt.figure()
-        self.__ax = self.__fig.add_subplot(
-            111, xlim=[0, 200], ylim=[0, 200])
-
-        self.__fig.show()
-        self.__fig.canvas.draw()
-
-        self.__lines = [self.__ax.plot(self.__dis_x[i], self.__dis_y[i], 
-            self.__styles, animated=True)[0] for i in range(n)]
-
-        print('lines:', self.__lines)
-
-        self.__background = self.__fig.canvas.copy_from_bbox(self.__ax.bbox)
-
-    def update_plot(self, i, delta_distance, delta_angle):
-
-        if i < 0 or i > self.__n:
-            raise ValueError('Invalid line index given.')
-
-        delta_angle = math.radians(delta_angle)
-        self.__theta[i] = self.__theta[i] + delta_angle
-
-        self.__pos_x[i] = self.__pos_x[i] +\
-            delta_distance * math.cos(self.__theta[i])
-        self.__pos_y[i] = self.__pos_y[i] +\
-            delta_distance * math.sin(self.__theta[i])
-
-        self.__dis_x[i].append(self.__pos_x[i])
-        self.__dis_y[i].append(self.__pos_y[i])
-
-    def draw(self):
-
-        self.__fig.canvas.restore_region(self.__background)
-        for i, line in enumerate(self.__lines):
-            line.set_xdata(self.__dis_x[i])
-            line.set_ydata(self.__dis_y[i])
-            self.__ax.draw_artist(line)
-            self.__fig.canvas.blit(self.__ax.bbox)
-        self.__fig.canvas.flush_events()
-
 class Robot:
 
     def __init__(self, b=26, port='', max_speed=10,
@@ -437,8 +363,6 @@ class Robot:
         self.issued_v = 0
         self.issued_w = 0
 
-        self.__target_orientation = 0
-
         # Reading of linear and angular velocity of the robot chassis.
         self.__v = 0
         self.__w = 0
@@ -460,7 +384,6 @@ class Robot:
 
         # Flags.
         self.is_pid_enable = True
-        self.is_drive = False
         self.is_autonomous = False
 
         # Autonomous driving variables.
@@ -721,13 +644,17 @@ class Robot:
         if not is_feedback:
             self.issued_v = vel_forward
             self.issued_w = vel_angular 
-            self.is_drive = True
 
         # v1 = vel_forward - self.__b * vel_angular
         # v2 = vel_forward + self.__b * vel_angular
         # self.drive_direct(v1, v2)
 
     def drive_to(self, speed, next_pos, targ_orientation=None):
+
+        """
+        This method is the same as drive_trajectory, except that this takes in
+        only the next waypoint instead of a series of waypoints.
+        """
 
         print('Drive from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f).' %\
                 (self.__pose[0], self.__pose[1], self.__pose[2],
@@ -739,12 +666,18 @@ class Robot:
 
         print('Start autonomous driving.')
         self.is_autonomous = True
-        self.is_drive = True
         self.auto_timestep = 0
         self.auto_t0 = 0
 
-    def drive_trajectory(self, speed, waypoints, targ_orientation=None,
-        is_recalculation=False):
+    def drive_trajectory(self, speed, waypoints, targ_orientation=None):
+
+        """
+        Drive the robot at a set speed through a set of waypoints. By default,
+        the orientation of the robot is automatically calculated from the last
+        two waypoints. The speed will is used to determine the magnitude of the
+        set of velocities at each point of the calculated trajectory produced by
+        interpolation of the robot's velocity at each waypoint.
+        """
 
         self.auto_trajectory = Trajectory(speed,
             self.__pose[:2], self.__pose[2],
@@ -761,18 +694,10 @@ class Robot:
                 self.auto_trajectory.current())
         self.auto_end_time = time_estimate
 
-        print('wp:', self.auto_trajectory.get_waypoints())
-
         self.is_autonomous = True
-        self.is_drive = True
-        self.issued_v = None
-        self.issued_w = None
         self.auto_timestep = 0
         self.auto_t0 = 0
         self.auto_speed = speed
-
-        if not is_recalculation:
-            self.plotter.set_waypoints([self.__pose[:2]] + waypoints)
 
     def stop_thread(self, i):
         
@@ -830,6 +755,7 @@ class Robot:
 
         while True:
 
+            # Read distance and angle.
             delta_distance, delta_angle = 0, 0
             try:
                 self.get_sensor(PKT_MOTION)
@@ -843,25 +769,30 @@ class Robot:
 
             # Compute the linear and angular velocity from measured distance and
             # angle within delta_time respectively.
-            v = delta_distance / delta_time # Forward velocity
-            w = delta_angle / delta_time    # Change in orientation (degree)
+            read_v = delta_distance / delta_time # Forward velocity
+            read_w = delta_angle / delta_time    # Change in orientation (degree)
 
             self.__delta_distance = delta_distance
             self.__delta_angle = delta_angle
-
-            if self.is_drive:
-                # print('v, w:', v, w)
-                pass
-
-            read_v = v
-            read_w = w
 
             # Update the position of the robot.
             self.__update_position(delta_distance, delta_angle)
 
             v1, v2 = 0, 0
-            if self.is_autonomous:
 
+            if self.is_autonomous:
+                # Autonomous driving.
+
+                # If the time duration estimated to reach the next waypoint in
+                # the trajectory is T, then every T/4 seconds:
+                #  1. If the robot has not reach the next estimated position in
+                #     the trajectory, recalculate the trajectory.
+                #  2. Otherwise, if we have reached the next estimated position
+                #     in the trajectory, we have two possibilities: either we're
+                #     at the final waypoint, or we're at the intermediate
+                #     waypoint. When we're at the final waypoint, simply
+                #     stop driving. Otherwise, we estimate the time to reach the
+                #     next waypoint.
                 if self.auto_timestep >= self.auto_end_time / 4.0:
 
                     next_pos = self.auto_trajectory.displacement(
@@ -875,15 +806,13 @@ class Robot:
                         waypoints = self.auto_trajectory.get_waypoints()[\
                                 self.auto_trajectory.current() + 1:]
 
-                        self.drive_trajectory(self.auto_speed, waypoints,
-                            is_recalculation=True)
+                        self.drive_trajectory(self.auto_speed, waypoints)
 
                     else:
                         self.test_song()
                         self.auto_trajectory.next()
 
                         if self.auto_trajectory.is_final_waypoint():
-                            print('Final!')
                             self.is_autonomous = False
                             self.auto_timestep = 0
                             v1, v2 = 0, 0
@@ -895,6 +824,9 @@ class Robot:
                             self.auto_end_time = self.auto_end_time + time_estimate 
                             self.auto_t0 = self.auto_timestep
 
+                # If the current waypoint (i.e., the latest reached waypoint)
+                # is not the final waypoint, then continue to drive
+                # autonomously.
                 if not self.auto_trajectory.is_final_waypoint():
 
                     input_v, input_w = self.auto_trajectory.motion(
@@ -943,7 +875,6 @@ class Robot:
         """
 
         self.drive(0, 0)
-        self.is_drive = False
         self.is_autonomous = False
         self.auto_timestep = 0
 

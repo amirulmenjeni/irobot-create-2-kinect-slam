@@ -106,8 +106,8 @@ class Trajectory:
 
         """
         Get the motion of the robot at time t during the trajectory between two
-        waypoints. This assumes the time since the previous waypoint is t0, and
-        t = t_current - t0.
+        waypoints (the current and the next). This assumes the time since the
+        previous waypoint is t0, and t = t_current - t0.
 
         The motion returned at time t depends on the trajectory to get from the
         current waypoint to the next waypoint.
@@ -127,6 +127,24 @@ class Trajectory:
         w = w / ((v[0] ** 2) + (v[1] ** 2))
 
         return np.linalg.norm(v), float(w)
+
+    def displacement(self, t):
+
+        """
+        Get the displacement of the robot at time t during the trajectory
+        between two waypoints (the current and the next). This assumes the time
+        since the previous waypoint is t0, and t = t_current - t0.
+        """
+
+        a = self.param_a()
+        b = self.param_b()
+
+        v0 = self.unit_velocity_at_point(self.__i) * self.__speed
+        p0 = self.__waypoints[self.__i]
+
+        p = (a / 6.0) * (t ** 3) + (0.5) * b * (t ** 2) + v0 * t + p0
+
+        return p
 
     def plot(self, delta_time):
 
@@ -240,6 +258,11 @@ class Trajectory:
         curve_line_x = [dis_x]
         curve_line_y = [dis_y]
 
+        dis_x2 = self.__waypoints[0][0]
+        dis_y2 = self.__waypoints[0][1]
+        curve_line_x2 = [dis_x2]
+        curve_line_y2 = [dis_y2]
+
         theta = self.__init_orientation
         timestep = 0
         while True:
@@ -258,6 +281,8 @@ class Trajectory:
             d_x = 0
             d_y = 0
 
+            px, py = self.displacement(timestep - t0)
+
             theta = theta + w
             dis_x = dis_x + v * delta_time * math.cos(theta)
 
@@ -271,12 +296,16 @@ class Trajectory:
             curve_line_x.append(dis_x)
             curve_line_y.append(dis_y)
 
+            curve_line_x2.append(px)
+            curve_line_y2.append(py)
+
             timestep += delta_time
 
         # Plotting.
 
         plt.plot(straight_line_x, straight_line_y, 'bo-')
         plt.plot(curve_line_x, curve_line_y, 'kx--')
+        plt.plot(curve_line_x2, curve_line_y2, 'gx--')
 
         for i in range(len(vector_at_point_x)):
             plt.plot(vector_at_point_x[i], vector_at_point_y[i], 'c--')
