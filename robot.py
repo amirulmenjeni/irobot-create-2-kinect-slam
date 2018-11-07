@@ -123,7 +123,31 @@ class Util:
 
         return d <= radius
 
-class PIDControler:
+    def angle_between_vectors(vec_a, vec_b):
+
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+        return math.acos(
+            np.dot(vec_a, vec_b) / (norm_a * norm_b))
+
+    def angle_to_dir(angle):
+        x = math.cos(math.radians(angle))
+        y = math.sin(math.radians(angle))
+        return np.array([x, y])
+
+    def disp_to_angle(disp):
+        x, y = disp
+        a = math.atan2(disp[1], disp[0])
+
+        # a is in 3rd or 4th quadrant.
+        if (x <= 0 and y <= 0) or (x >= 0 and y <= 0):
+            a = 2 * math.pi - abs(a)
+
+        return math.degrees(a)
+
+
+
+class PIDController:
 
     def __init__(self, kp, ki, kd):
         self.kp, self.ki, self.kd = kp, ki, kd
@@ -132,9 +156,13 @@ class PIDControler:
         self.__setpoint = 0
         self.__integral = 0
 
-    def e(self, sp, pv):
+    def e(self, sp, pv, mod=None):
         self.__prev_error = self.__error
-        self.__error = sp - pv
+        
+        if mod is None:
+            self.__error = sp - pv
+        else:
+            self.__error = (sp - pv) % mod
 
     def P(self):
         return self.kp * self.__error
@@ -231,6 +259,45 @@ class StaticPlotter:
         for i, (x, y) in enumerate(waypoints):
             self.__waypoints_x[i] = x
             self.__waypoints_y[i] = y
+
+    def add_plot(self, i, timestamp, x, y, v, w):
+
+        if i < 0 or i > self.__n:
+            raise ValueError('Invalid line index given.')
+
+        self.__pos_x[i] = x
+        self.__pos_y[i] = y
+
+        if i in self.__on_off and self.__on_off[i][2] == '1':
+            if self.__pos_x[i] < self.__min_x:
+                self.__min_x = self.__pos_x[i]
+            if self.__pos_x[i] > self.__max_x:
+                self.__max_x = self.__pos_x[i]
+            if self.__pos_y[i] < self.__min_y:
+                self.__min_y = self.__pos_y[i]
+            if self.__pos_y[i] > self.__max_y:
+                self.__max_y = self.__pos_y[i]
+
+        if i in self.__on_off and self.__on_off[i][0] == '1':
+            if v < self.__min_v:
+                self.__min_v = v
+            if v > self.__max_v:
+                self.__max_v = v
+
+        if i in self.__on_off and self.__on_off[i][1] == '1':
+            if w < self.__min_w:
+                self.__min_w = w
+            if w > self.__max_w:
+                self.__max_w = w
+
+        self.__dis_x[i].append(self.__pos_x[i])
+        self.__dis_y[i].append(self.__pos_y[i])
+
+        self.__timestep[i].append(self.__time[i])
+        self.__time[i] = timestamp
+
+        self.__linear_velocity[i].append(v)
+        self.__angular_velocity[i].append(w)
 
     def update_plot(self, i, delta_time, delta_distance, delta_angle, v, w):
 
@@ -379,8 +446,8 @@ class Robot:
         # PID controllers.
         # self.pid_v = PIDControler(1.5, 0.015, 0.0)
         # self.pid_w = PIDControler(0.65, 0.05, 0.0)
-        self.pid_v = PIDControler(pid_v[0], pid_v[1], pid_v[2])
-        self.pid_w = PIDControler(pid_w[0], pid_w[1], pid_w[2])
+        self.pid_v = PIDController(pid_v[0], pid_v[1], pid_v[2])
+        self.pid_w = PIDController(pid_w[0], pid_w[1], pid_w[2])
 
         # Flags.
         self.is_pid_enable = True
@@ -403,7 +470,7 @@ class Robot:
         self.__is_timestep_end = False
 
         # Initialize all threads.
-        self.init_threads()
+        self.__init_threads()
 
     def ports_lookup(self):
 
@@ -423,14 +490,14 @@ class Robot:
 
         return roomba_ports
 
-    def init_threads(self):
+    def __init_threads(self):
 
         """
         Initialize all threads.
         """
 
         self.threads = [
-                threading.Thread(target=Robot.thread_motion, args=(self,),\
+                threading.Thread(target=Robot.thread_motion2, args=(self,),\
                 name='Motion'),\
         ]
 
@@ -743,6 +810,152 @@ class Robot:
         if not self.threads[i].is_alive():
             self.threads[i].start()
 
+    def thread_motion2(self):
+
+        delta_time = 0.25
+        next_waypoint = None
+        calc_pos = None
+        prev_calc_pos = None
+        timestep = 0
+        t0 = 0
+        step_counter = 0
+        step_mod = 4
+
+        pid_x = PIDController(0.15, 0, 0)
+        pid_y = PIDController(0.15, 0, 0)
+        pid_a = PIDController(0.0, 0, 0)
+
+        self.auto_timestep = self.auto_timestep + delta_time * 5
+
+        print('Thread motion 2 started')
+
+        while True:
+
+
+            delta_distance, delta_angle = 0, 0
+            try:
+                self.get_sensor(PKT_MOTION)
+            except:
+                pass
+            time.sleep(delta_time)
+            try:
+                delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+            except:
+                pass
+
+            read_v = delta_distance / delta_time
+            read_w = delta_distance / delta_time
+
+            self.__delta_distance = delta_distance
+            self.__delta_angle = delta_angle
+
+            self.__update_position(delta_distance, delta_angle)
+
+            v1, v2 = 0, 0
+
+            if self.is_autonomous:
+                # Current pose of the robot.
+                x, y, a = self.get_pose()
+
+                # The current process variable.
+                curr_pos = np.array([x, y])
+
+                if next_waypoint is None:
+                    next_waypoint = self.auto_trajectory.get_next_waypoint()
+                    time_est =\
+                        self.auto_trajectory.estimate_time_between_points(
+                            self.auto_trajectory.get_speed(),
+                            self.auto_trajectory.current()
+                        )
+                    t0 = 0
+                    print('NEXT WAYPOINT: %s' % next_waypoint)
+
+                # Update next waypoint.
+                if Util.is_in_circle(next_waypoint, 2.5, curr_pos):
+                    self.test_song()
+                    self.auto_trajectory.next()
+                    if self.auto_trajectory.is_final_waypoint():
+                        self.is_autonomous = False
+                        self.test_song()
+                        continue
+                    else:
+                        next_waypoint = self.auto_trajectory.get_next_waypoint()
+                        t0 = t0 + time_est
+                        time_est =\
+                            self.auto_trajectory.estimate_time_between_points(
+                                self.auto_trajectory.get_speed(),
+                                self.auto_trajectory.current()
+                            )
+
+                # Update the SP every 2 deltatime.
+                if step_counter % step_mod == 0:
+                    if calc_pos is not None:
+                        prev_calc_pos = calc_pos
+                    calc_pos = self.auto_trajectory.displacement(
+                        timestep - t0)
+                    self.plotter.add_plot(1, timestep,
+                        calc_pos[0], calc_pos[1], 0, 0)
+                step_counter = (step_counter + 1) % step_mod
+
+                # Angle between current heading and the next heading.
+                curr_dir = Util.angle_to_dir(self.get_heading())
+                if np.linalg.norm(calc_pos) == 0:
+                    calc_pos = [1, 0]
+                if prev_calc_pos is None:
+                    next_dir = np.array(calc_pos)
+                else:
+                    next_dir = np.array(calc_pos) - prev_calc_pos
+                error_angle = Util.angle_between_vectors(next_dir, curr_dir)
+
+                # Direction from PV to SP.
+                error_vector = calc_pos - curr_pos
+
+                # The direction of error in angle.
+                angle_dir = 0
+                cross_prod = np.cross(curr_dir, next_dir)
+                if cross_prod > 0:
+                    angle_dir = 1 # Counterclockwise.
+                elif cross_prod < 0:
+                    angle_dir = -1 # Clockwise.
+
+                error_angle = error_angle * angle_dir
+
+                pid_x.e(calc_pos[0], curr_pos[0])
+                pid_y.e(calc_pos[1], curr_pos[1])
+                pid_a.e(Util.disp_to_angle(calc_pos), a, mod=360)
+
+                out_x = error_vector[0] +\
+                    pid_x.P() + pid_x.I(delta_time) + pid_x.D(delta_time)
+                out_y = error_vector[1] +\
+                    pid_y.P() + pid_y.I(delta_time) + pid_y.D(delta_time)
+                out_a = error_angle +\
+                    pid_a.P() + pid_a.I(delta_time) + pid_a.D(delta_time)
+
+                out_v = np.linalg.norm([out_x, out_y])
+                out_w = out_a
+
+                # Update sensor reading plot.
+                self.plotter.add_plot(0, timestep, 
+                    curr_pos[0], curr_pos[1],
+                    read_v, read_w)
+
+                if step_counter % step_mod == 0:
+                    v1, v2 = Robot.__inverse_drive(
+                        out_v, out_w, self.__b) 
+                    self.drive_direct(v1, v2)
+
+                timestep += delta_time
+
+            else:
+                # Manual driving.
+                v1, v2 = Robot.__inverse_drive(
+                    self.issued_v, self.issued_w, self.__b)
+                self.drive_direct(v1, v2)
+
+            if self.is_thread_stop_requested[THREAD_MOTION]:
+                break
+            
+
     def thread_motion(self):
 
         """
@@ -974,6 +1187,14 @@ class Robot:
 
         return self.__pose
 
+    def get_position(self):
+
+        return self.__pose[:2]
+
+    def get_heading(self):
+
+        return self.__pose[2]
+
     def reset_pose(self):
 
         self.__pose = (0, 0, 0)
@@ -1015,7 +1236,7 @@ class Robot:
         x = self.__pose[0] + delta_distance * math.cos(radian)
         y = self.__pose[1] + delta_distance * math.sin(radian)
 
-        self.__pose = (x, y, orientation)
+        self.__pose = np.array([x, y, orientation])
 
     def __inverse_drive(v, w, b):
 

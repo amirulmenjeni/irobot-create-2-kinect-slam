@@ -131,9 +131,9 @@ class Trajectory:
     def displacement(self, t):
 
         """
-        Get the displacement of the robot at time t during the trajectory
-        between two waypoints (the current and the next). This assumes the time
-        since the previous waypoint is t0, and t = t_current - t0.
+        Get the displacement of the robot at time t during the trajectory, where
+        t is 0 <= t <= t1, and t1 is the estimated time taken when the robot
+        reach the next waypoint.
         """
 
         a = self.param_a()
@@ -215,6 +215,7 @@ class Trajectory:
 
             timestep += delta_time
             time.sleep(delta_time)
+
 
     def plot_trajectory(self):
 
@@ -428,6 +429,12 @@ class Trajectory:
 
     def get_waypoints(self):
         return self.__waypoints
+
+    def get_waypoint(self, i):
+        return self.__waypoints[i]
+
+    def get_next_waypoint(self):
+        return self.__waypoints[self.__i + 1]
         
     def unit_velocity_at_point(self, i):
 
