@@ -5,7 +5,7 @@ from ai import AStar
 
 class MapRepresentation:
 
-    def __init__(self, random_obstructions=0):
+    def __init__(self, random_obstruction=0):
 
         """
         Generate the map representation in which the robot is traversing. The
@@ -13,50 +13,46 @@ class MapRepresentation:
         vertices (nodes) and edges.
         """
 
-        if random_obstructions < 0:
-            random_obstructions = 0
-        if random_obstructions > 1:
-            random_obstructions = 1
-
-        print('random_obstructions:', random_obstructions)
+        if random_obstruction < 0:
+            random_obstruction = 0
+        if random_obstruction > 1:
+            random_obstruction = 1
 
         self.graph = nx.Graph()   
         
         # Initial map representation.
         self.graph.add_node((0, 0), is_open=True, g_cost=0, h_cost=0)
-        self.__init_graph(2, self.graph, list(self.graph.nodes())[0],
-            random_obstructions=random_obstructions)
 
-    def __init_graph(self, depth, graph, node, random_obstructions=0):
+        self.expand_at(list(self.graph.nodes())[0], depth=2,
+            random_obstruction=random_obstruction)
+
+    def expand_at(self, node, depth=1, random_obstruction=0):
 
         """
-        Initialize the graph, starting from the root node (0, 0). The graph is
-        generated based on the depth. A graph of depth d has 4^d nodes. The
-        depth determines how large the initial map representation is.
+        Expand the graph starting from the given node. The depth determines the
+        recursive depth of expansion. At most, 4^d new nodes is created upon
+        expansion (existing nodes are silently ignored by networkx).
         """
 
         if depth < 0:
             return
 
-        # Generate the adjacent nodes at node (x, y). Each node has four
-        # neighbors (up, down, left, and, right).
         x, y = node
         for i in range(-1, 2):
             for j in range(-1, 2):
                 if abs(i) != abs(j):
 
                     is_open = True
-                    if random.random() < random_obstructions:
+                    if random.random() < random_obstruction:
                         is_open = False
 
-                    graph.add_node((x + i, y + j), is_open=is_open,
-                        h_cost=0, g_cost=0)
+                    self.graph.add_node((x + i, y + j), is_open=is_open,
+                        g_cost=0, h_cost=0)
+                    self.graph.add_edge((x, y), (x + i, y + j), weight=1)
 
-                    graph.add_edge((x, y), (x + i, y + j))
-
-        for adj_node in list(graph[x, y]):
-            self.__init_graph(depth - 1, self.graph, adj_node,
-                random_obstructions=random_obstructions)
+        for adj_node in list(self.graph[x, y]):
+            self.expand_at(adj_node, depth - 1,
+                random_obstruction=random_obstruction)
 
     def show_graph(self, start=(), goal=()):
 
@@ -84,17 +80,3 @@ class MapRepresentation:
         nx.draw_spectral(self.graph, node_color=color_map, with_labels=True)
 
         plt.show()
-
-    def manhattan_distance(n, m):
-
-        """
-        Returns the manhattan distance between two nodes n and m.
-        """
-
-        nx, ny = n
-        mx, my = m
-
-        return abs(nx - mx) + abs(ny - my)
-
-class MapSolver:
-    pass

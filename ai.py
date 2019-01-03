@@ -15,6 +15,11 @@ class Util:
         return abs(n[0] - m[0]) + abs(n[1] - m[1])
 
     def adj_open_nodes(graph, node, attr_key='is_open', open_value=True):
+
+        """
+        Generate the accessible adjacent nodes from the given node in the given
+        graph.
+        """
         
         for adj_node in list(graph[node]):
             if graph.nodes[adj_node][attr_key] == open_value:
@@ -24,28 +29,22 @@ class AStar:
 
     def __find_node_in_queue(queue, node):
 
+        """
+        Find the given node in the queue. If found, the node is returned.
+        Otherwise, None is returned.
+        """
+
         for n in queue.queue:
             if n[1] == node:
                 return n
         return None
 
-    def __find_greater_f_in_queue(queue, node, node_f_cost):
-
-        for n in queue.queue:
-            if n[1] == node and n[0] > node_f_cost:
-                n[0] = node_f_cost
-        return None
-
-    def __cleanup(graph, explored_nodes):
-
-        for node in explored_nodes:
-            self.graph.nodes[node]['g_cost'] = 0
-            self.graph.nodes[node]['h_cost'] = 0
-
     def solve(graph, start, goal):
 
         """
-
+        Returns a list of nodes that represents the solution or path from the
+        starting node to the goal node on the given graph. Makes use of A*
+        search algorithm.
         """
 
         # Frontier queue, containing 2-tuples: (priority, (x, y)).
@@ -68,37 +67,29 @@ class AStar:
             # Get the highest node with highest priority (lowest f-cost).
             f, node = frontier_queue.get()
 
-            print(node, f, graph.nodes[node])
-
             # Flag this node as explored.
             explored_nodes[node] = True
 
             # Goal test.
             if node == goal:
-                print('Solution found!')
                 solution_list = [node]
-                parent = solution.nodes[node]['parent']
-                print('%s <- %s' % (parent, node))
-                node = parent
+                node = solution.nodes[node]['parent']
 
                 while node is not None:
                     solution_list.append(node)
-                    parent = solution.nodes[node]['parent']
-                    # print('%s <- %s' % (parent, node))
-                    node = parent
+                    node = solution.nodes[node]['parent']
 
-                print('Exiting')
                 return solution_list[::-1] # Reverse the list.
 
             # Iterate through this node's neighbouring nodes.
             for neighbour in Util.adj_open_nodes(graph, node):
 
-                g_cost = search_graph.nodes[node]['g_cost'] + 1
+                g_cost = search_graph.nodes[node]['g_cost'] +\
+                    graph.edges[node, neighbour]['weight']
                 h_cost = Util.manhattan_distance(neighbour, goal)
                 f_cost = g_cost + h_cost
 
                 if neighbour not in explored_nodes:
-                    print('Parent of %s: %s' % (neighbour, node))
                     solution.add_node(neighbour, parent=node)
 
                 if neighbour not in explored_nodes and\
@@ -112,12 +103,6 @@ class AStar:
 
                     frontier_queue.put((f_cost, neighbour))
                 
-                else:
-                    # If the neighbour is in the frontier_queue with a higher
-                    # f-cost, then replace that frontier node with neighbour.
-                    AStar.__find_greater_f_in_queue(frontier_queue,
-                        neighbour, f_cost)
-
         # No solution found.
         return []
 
