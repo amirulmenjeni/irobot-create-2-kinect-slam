@@ -6,9 +6,14 @@ import struct
 import threading
 import math
 import numpy as np
+import scipy.ndimage as ndimg
+import cv2
+import cv2
 import matplotlib.pyplot as plt 
 import matplotlib.gridspec as gridspec
 import csv
+import freenect
+import slam
 from serial.tools import list_ports
 from kinematic import Trajectory
 
@@ -36,6 +41,7 @@ PKT_BYTES[PKT_STATUS]   = 10
 
 # Threads
 THREAD_MOTION = 0
+THREAD_SLAM = 1
 
 class Util:
     def to_twos_comp_2(val):
@@ -144,8 +150,6 @@ class Util:
             a = 2 * math.pi - abs(a)
 
         return math.degrees(a)
-
-
 
 class PIDController:
 
@@ -469,6 +473,9 @@ class Robot:
 
         self.__is_timestep_end = False
 
+        # SLAM related.
+        self.posterior = np.zeros((500, 500))
+
         # Initialize all threads.
         self.__init_threads()
 
@@ -499,6 +506,8 @@ class Robot:
         self.threads = [
                 threading.Thread(target=Robot.thread_motion2, args=(self,),\
                 name='Motion'),\
+                threading.Thread(target=Robot.thread_slam, args=(self,),\
+                name='SLAM'),\
         ]
 
         # A list of flag to maintain thread stop request
@@ -511,6 +520,8 @@ class Robot:
             else:
                 thread.start()
                 print('Thread "%s" started' % thread.name)
+
+            time.sleep(0.1)
 
     def clean_up(self):
         self.stop_all_threads()
@@ -810,6 +821,62 @@ class Robot:
         if not self.threads[i].is_alive():
             self.threads[i].start()
 
+    def thread_slam(self):
+
+        delta_time = 0.25
+        SLICE_ROW = 315
+        DEPTH_SHAPE_COL = 640
+
+        # Default probability for each cell is log_odds(0) (i.e, 0.5).
+        self.posterior.fill(0)
+
+        # First two values are the x- and y-coordinate of the sensor
+        # (robot) during which the sensor value is read, and the last two values
+        # are the x- and y-coordinate of the occupied grid cell.
+        obs_data = np.array([ [0, 0, 0, 0] ] * DEPTH_SHAPE_COL)
+        prev_obs_data = []
+
+        while 1:
+
+            # 480 x 640 ndarray matrix.
+            depth = freenect.sync_get_depth()[0]
+
+            # Take a slice of one whole row.
+            depth_slice = depth[SLICE_ROW:SLICE_ROW+1, :]
+
+            for x, d in enumerate(depth_slice.flatten()):
+
+                obs_data[x] = slam.depth_to_world_2d_pos(
+                        x, SLICE_ROW,
+                        d,
+                        DEPTH_SHAPE_COL,
+                        58.5,
+                        self.__pose
+                    )
+
+            prev_posterior = np.copy(self.posterior)
+
+            # Scan-matching.
+            if len(prev_obs_data) != 0:
+                # We only need the occupied/obstacle x-y locations for
+                # scan-matching.
+                match_tr = slam.icp(prev_obs_data[:, 2:], obs_data[:, 2:])
+                self.posterior = ndimg.affine_transform(
+                    self.posterior, match_tr)
+
+            # Update posterior.
+            slam.occupancy_grid_mapping(self.posterior,\
+                np.copy(self.posterior), self.__pose, obs_data, 10.0)
+
+            prev_obs_data = np.copy(obs_data)
+
+            time.sleep(0.25)
+
+            prev_obs_data = np.copy(obs_data)
+
+            if self.is_thread_stop_requested[THREAD_SLAM]:
+                break
+
     def thread_motion2(self):
 
         delta_time = 0.25
@@ -831,7 +898,6 @@ class Robot:
 
         while True:
 
-
             delta_distance, delta_angle = 0, 0
             try:
                 self.get_sensor(PKT_MOTION)
@@ -844,12 +910,12 @@ class Robot:
                 pass
 
             read_v = delta_distance / delta_time
-            read_w = delta_distance / delta_time
+            read_w = delta_angle / delta_time
 
             self.__delta_distance = delta_distance
             self.__delta_angle = delta_angle
 
-            self.__update_position(delta_distance, delta_angle)
+            self.__update_odometry(delta_distance, delta_angle)
 
             v1, v2 = 0, 0
 
@@ -954,7 +1020,6 @@ class Robot:
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
-            
 
     def thread_motion(self):
 
@@ -989,7 +1054,7 @@ class Robot:
             self.__delta_angle = delta_angle
 
             # Update the position of the robot.
-            self.__update_position(delta_distance, delta_angle)
+            self.__update_odometry(delta_distance, delta_angle)
 
             v1, v2 = 0, 0
 
@@ -1203,6 +1268,11 @@ class Robot:
         return self.__delta_distance
 
     def get_delta_angle(self):
+
+        """
+        The change in angle in degrees.
+        """
+
         return self.__delta_angle
 
     def enable_pid(self):
@@ -1211,12 +1281,12 @@ class Robot:
     def disable_pid(self):
         self.is_pid_enable = False
 
-    def __update_position(self, delta_distance, delta_angle):
+    def __update_odometry(self, delta_distance, delta_angle):
 
         """
         Updates the cartesian coordinate position of the robot chassis in the
-        inertial reference frame. This assumes the delta distance and delta
-        angle given is taken at a consistent time ticks.
+        inertial reference frame based on odometry. This assumes the delta
+        distance and delta angle given is taken at a consistent time ticks.
 
         Parameters:
             delta_distance: 
