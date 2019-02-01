@@ -5,7 +5,7 @@ import math
 import numpy as np
 import time
 import freenect
-import ICP
+import vtk
 from sklearn.neighbors import NearestNeighbors
 
 def transform_2d_points(a, m):
@@ -65,7 +65,7 @@ def depth_to_world_2d_pos(x_scr, y_scr, depth, scr_width, hfov, pose):
 
     p = np.array([x_world, y_world, 1])
     p = np.matmul(r, p)
-    return np.array([ pose[0], pose[1], p[0], p[1] ])
+    return p[:2]
 
 def cell_to_world_pos(cell, map_size, resolution):
 
@@ -179,7 +179,7 @@ def __beam_line(cells,  p0, p1):
         else:
             __line_high(cells, p0, p1)
 
-def occupancy_grid_mapping(posterior, prev_posterior, pose, obs_data,
+def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
     resolution):
 
     map_size = posterior.shape
@@ -192,17 +192,15 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, obs_data,
     # with a straight line formed between the robot and the given obstacle b_i
     # position.  Take the union C = C_0 U C_1 U ... U C_N.
     cells = {}
-    for x0, y0, x1, y1 in obs_data:
-
-        x0, y0 = world_to_cell_pos((x0, y0), map_size, resolution)
-
-        x1, y1 = world_to_cell_pos((x1, y1), map_size, resolution)
-        __beam_line(cells, (x0, y0), (x1, y1))
+    x1, y1 = world_to_cell_pos(pose[:2], map_size, resolution)
+    for x0, y0 in scan_data:
+        __beam_line(cells, (x1, y1), (x0, y0))
 
     # Perform log odds update on the posterior map distribution.
     for p in cells.keys():
 
         if __is_out_of_bound(p, map_size):
+            print('!')
             continue
 
         # p was observed as an obstacle.
@@ -221,12 +219,26 @@ def d3_map(posterior):
 
     return d 
 
-def icp(prev, curr, init_pose=(0, 0, 0), iterations=5):
+def icp(prev, curr, init_tr=(0, 0, 0), iterations=50):
 
-    # Ref: https://stackoverflow.com/questions/20120384/
+    """
+    @param prev: A m-by-2 numpy array where m is the number of 2-d points from
+    previous scan.
+    @param curr: A m-by-2 numpy array where m is the number of 2-d points from
+    current scan.
+    @param init_tr: Initial transformation of the robot in [dx, dy, d_radian]^T
+    @iterations: The number of iterations for the ICP algorithm.
 
-    x0, y0 = init_pose[:2]
-    h0 = init_pose[2]
+    @output r, t: Returns a 2-by-2 rotation matrix and a size-2 array
+    translation vector to transform the points in prev to match the points in
+    curr.
+    """
+
+    # Refs: https://stackoverflow.com/questions/20120384/,
+    #       https://nghiaho.com/?page_id=671
+
+    x0, y0 = init_tr[:2]
+    h0 = init_tr[2]
 
     src = np.copy(prev)
     dst = np.copy(curr)
@@ -238,22 +250,72 @@ def icp(prev, curr, init_pose=(0, 0, 0), iterations=5):
         [0           ,  0           , 1 ]
     ])
 
-    src = transform_2d_points(src, tr).astype(int)
+    # Calculate the geometrical centroid of each point cloud.
+    centroid_src = np.mean(src, axis=0)
+    centroid_dst = np.mean(dst, axis=0)
 
-    for i in range(iterations):
+    # Apply the rotation then translation.
+    src = np.dot(tr[:2,:2], src.T).T + tr[:2,2]
 
+    initial_mean_dist = None
+
+    for _ in range(iterations):
+
+        # Use Neares Neighbors algorithm to find the closest point in dst for
+        # each point in src.
         nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(dst)
     
-        _, indices = nbrs.kneighbors(src)
+        distances, indices = nbrs.kneighbors(src)
 
-        t = cv2.estimateAffinePartial2D(src, dst)[0]
-        t = np.vstack((t, [0, 0, 1]))
+        if initial_mean_dist is None:
+            initial_mean_dist = np.mean(distances)
 
-        src = transform_2d_points(src, t).astype(int)
+        # The ratio or percentage of how close src point cloud is to the dst
+        # point cloud. A ratio of 0 means src is perfectly matched with dst
+        # (each point in src has zero distance to the corresponding cloesest
+        # point in dst). A ratio of 1 means src and dst is still in the initial
+        # state. This ratio should decrease every iteration.
+        ratio = np.mean(distances) / initial_mean_dist
 
-        tr = tr @ t
+        # Prevent further unnecessary iterations. When the src is 95% closer to
+        # dst from its initial state, we stop.
+        if ratio < 0.05:
+            break
 
-    return tr
+        # Use Singular Valued Decomposition (SVD):
+        # U, S, Vt = SVD(A)
+        #
+        # The rotation R can be computed as:
+        # R = Vt @ transpose(U)
+        #
+        # And the translation:
+        #
+        # T = -R @ centroid_src + centroid_dst
+
+        a = np.zeros((2, 2))
+        for p_src, p_dst in zip(src, dst[indices.flatten()]):
+            p_src = p_src - centroid_src
+            p_dst = p_dst - centroid_dst
+            a += p_src.reshape(2, 1) @ p_dst.reshape(1, 2)
+        u, s, v = np.linalg.svd(a)
+
+        r = v @ np.transpose(u)
+        t = -r @ centroid_src.reshape(2, 1) + centroid_dst.reshape(2, 1)
+
+        # Apply the transformation on src for this iteration, moving the points
+        # in src closer to dst.
+        src = np.dot(r, src.T).T + t.reshape(2)
+        src = src.astype(int)
+
+        # Recalculate the geometrical centroid for the new src point cloud.
+        centroid_src = np.mean(src, axis=0)
+
+        tmp = np.hstack((r, t))
+        tmp = np.vstack((tmp, [0, 0, 1]))
+
+        tr = tr @ tmp
+
+    return tr[:2, :2], tr[:2, 2].reshape(2)
 
 def draw_square(d3_map, resolution, pose, bgr, r=3):
 

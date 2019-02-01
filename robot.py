@@ -14,6 +14,7 @@ import matplotlib.gridspec as gridspec
 import csv
 import freenect
 import slam
+from icp import icp
 from serial.tools import list_ports
 from kinematic import Trajectory
 
@@ -830,11 +831,7 @@ class Robot:
         # Default probability for each cell is log_odds(0) (i.e, 0.5).
         self.posterior.fill(0)
 
-        # First two values are the x- and y-coordinate of the sensor
-        # (robot) during which the sensor value is read, and the last two values
-        # are the x- and y-coordinate of the occupied grid cell.
-        obs_data = np.array([ [0, 0, 0, 0] ] * DEPTH_SHAPE_COL)
-        prev_obs_data = []
+        prev_frame = None
 
         while 1:
 
@@ -844,35 +841,58 @@ class Robot:
             # Take a slice of one whole row.
             depth_slice = depth[SLICE_ROW:SLICE_ROW+1, :]
 
+            # The pose of the robot when the this scan takes place.
+            scan_pose = self.__pose
+
+            md = -1
+            curr_frame = None
             for x, d in enumerate(depth_slice.flatten()):
 
-                obs_data[x] = slam.depth_to_world_2d_pos(
+                # Ignore depth value at upper range boundary (2^11 - 1).
+                if d >= 2047:
+                    continue
+
+                # Get the world coordinate corresponding to each depth reading.
+                px, py = slam.depth_to_world_2d_pos(
                         x, SLICE_ROW,
                         d,
                         DEPTH_SHAPE_COL,
                         58.5,
-                        self.__pose
+                        scan_pose
                     )
 
-            prev_posterior = np.copy(self.posterior)
+                frame = slam.world_to_cell_pos((px, py),
+                    self.posterior.shape, 10.0)
 
-            # Scan-matching.
-            if len(prev_obs_data) != 0:
-                # We only need the occupied/obstacle x-y locations for
-                # scan-matching.
-                match_tr = slam.icp(prev_obs_data[:, 2:], obs_data[:, 2:])
-                self.posterior = ndimg.affine_transform(
-                    self.posterior, match_tr)
+                if curr_frame is None:
+                    curr_frame = np.array(frame)
+                else:
+                    curr_frame = np.vstack((curr_frame, frame))
+
+            # Scan-match the current scan frame with the previous scan frame.
+            if prev_frame is not None:
+
+                delta_pose = self.get_delta_pose()
+                delta_cell = slam.world_to_cell_pos(delta_pose[:2],
+                    self.posterior.shape, 10.0)
+                delta_angle = math.radians(delta_pose[2])
+
+                delta_pose = np.array(
+                    [delta_cell[0], delta_cell[1], delta_angle])
+
+                rot, t = slam.icp(curr_frame, prev_frame,
+                    init_tr=delta_pose, iterations=50)
+                
+                curr_frame = np.dot(rot, curr_frame.T).T + t
+                curr_frame = curr_frame.astype(int)
 
             # Update posterior.
             slam.occupancy_grid_mapping(self.posterior,\
-                np.copy(self.posterior), self.__pose, obs_data, 10.0)
+                    np.copy(self.posterior), scan_pose, curr_frame[:, :2], 10.0)
 
-            prev_obs_data = np.copy(obs_data)
+            prev_frame = np.copy(curr_frame)
 
             time.sleep(0.25)
-
-            prev_obs_data = np.copy(obs_data)
 
             if self.is_thread_stop_requested[THREAD_SLAM]:
                 break
@@ -1243,6 +1263,14 @@ class Robot:
 
         return (self.__v, self.__w)
 
+    def get_delta_pose(self):
+
+        dd = self.__delta_distance
+        da = self.__delta_angle # Degree
+        dx = dd * math.cos(math.radians(da))
+        dy = dd * math.sin(math.radians(da))
+        return np.array([dx, dy, da])
+
     def get_pose(self):
 
         """
@@ -1274,6 +1302,12 @@ class Robot:
         """
 
         return self.__delta_angle
+
+    def get_delta_x(self):
+        return self.issued_v * math.cos(math.radians(self.__delta_angle))
+
+    def get_delta_y(self):
+        return self.issued_v * math.sin(math.radians(self.__delta_angle))
 
     def enable_pid(self):
         self.is_pid_enable = True
