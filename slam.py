@@ -305,7 +305,6 @@ def icp(prev, curr, init_tr=(0, 0, 0), iterations=50):
         # Apply the transformation on src for this iteration, moving the points
         # in src closer to dst.
         src = np.dot(r, src.T).T + t.reshape(2)
-        src = src.astype(int)
 
         # Recalculate the geometrical centroid for the new src point cloud.
         centroid_src = np.mean(src, axis=0)
