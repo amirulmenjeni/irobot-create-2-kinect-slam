@@ -98,7 +98,7 @@ def main(stdscr, robot):
             # d = d.astype(np.uint8)
 
             d = slam.d3_map(robot.posterior)
-            slam.draw_square(d, 10.0, robot.get_pose(), (255, 0, 0), r=3)
+            slam.draw_square(d, 10.0, robot.get_pose(), (255, 0, 0), width=3)
             slam.draw_vertical_line(d, 250, (0, 0, 255))
             slam.draw_horizontal_line(d, 250, (0, 0, 255))
 

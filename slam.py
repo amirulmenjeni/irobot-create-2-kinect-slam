@@ -1,18 +1,17 @@
 
-import frame_convert2
 import cv2
 import math
 import numpy as np
 import time
-import freenect
-import vtk
 from sklearn.neighbors import NearestNeighbors
 
 def transform_2d_points(a, m):
 
     """
-    @param a: A Nx2 numpy array containing a list of 2d points.
-    @param m: A homogeneous transformation matrix.
+    @param a:
+        A Nx2 numpy array containing a list of 2d points.
+    @param m:
+        A homogeneous transformation matrix.
     """
 
     a = np.hstack( (a, np.ones((a.shape[0], 1))) )
@@ -28,59 +27,21 @@ def log_odds_to_prob(k):
 def prob_to_log_odds(p):
     return math.log10(p / (1.0 - p))
 
-def depth_to_world_2d_pos(x_scr, y_scr, depth, scr_width, hfov, pose):
-
-    """
-    The Kinect depth sensor has depth value for each "pixel". This function
-    returns the real world position (x1, y1) of the obstacles detected by the
-    depth sensor when the robot is assumed to be at position (x0, y0).
-
-    @param x_scr: The column corresponding the depth value.
-    @param y_scr: The row corresponding the depth value.
-    @param depth: The depth value at (x_scr, y_scr).
-    @param scr_width: The width (number of columns in a row) that the depth data
-    has. Xbox 360 Kinect has 480 columns in a row (480x640) depth data
-    resolution. 
-    @param hfov: The horizontal field of view of the depth sensor.
-    Xbox 360 Kinect has hfov ~ 58.5.
-    """
-
-    hfov = math.radians(hfov)
-    heading = math.radians(pose[2])
-
-    # Focal length.
-    f = scr_width / (2.0 * math.tan(hfov / 2.0))
-
-    x_world = depth * x_scr / f
-    y_world = depth * y_scr / f
-
-    # Fix original heading along the x-axis.
-    theta = (hfov / 2.0) - (math.pi / 2.0) + heading
-
-    r = np.array([
-        [math.cos(theta), -math.sin(theta), 0],
-        [math.sin(theta),  math.cos(theta), 0],
-        [0                ,  0                , 1]
-    ])
-
-    p = np.array([x_world, y_world, 1])
-    p = np.matmul(r, p)
-    return p[:2]
-
 def cell_to_world_pos(cell, map_size, resolution):
 
     """
     Returns the world position corresponding the given grid cell position.
 
-    @param cell: 2-tuple grid cell position (column, row).
-    @param map_size: 2-tuple shape of the map array shape 
-    (row_size, column_size).
+    @param cell:
+        2-tuple grid cell position (column, row).
+    @param map_size:
+        2-tuple shape of the map array shape (row_size, column_size).
     """
 
     mx, my = map_size
     cx, cy = cell
-    x = (cx - mx / 2) * resolution 
-    y = (my / 2 - cy) * resolution 
+    x = (cx - mx / 2) * resolution
+    y = (my / 2 - cy) * resolution
     return (x, y)
 
 def world_to_cell_pos(wpos, map_size, resolution):
@@ -89,7 +50,24 @@ def world_to_cell_pos(wpos, map_size, resolution):
     wx, wy = wpos
     x = (wx / resolution) + (mx / 2)
     y = (my / 2) - (wy / resolution)
-    return (int(y), int(x))
+
+    return (int(y), int(x)) # row, column
+
+def world_frame_to_cell_pos(frame, map_size, resolution):
+
+    """
+    @param frame:
+        An Nx2 array of the 2d real coordinates.
+    @param map_size:
+        The occupancy grid map size, a tuple of (num_row, num_col).
+    @param resolution:
+        The units per pixel of the grid map.
+    """
+
+    sz = np.array(map_size) / 2
+    cell_pos = (frame / resolution) * np.array([1, -1]) + sz
+
+    return cell_pos[:,::-1].astype(int) # to row, column
 
 def __is_out_of_bound(cells, map_size):
 
@@ -151,7 +129,7 @@ def __line_high(cells, p0, p1):
             d = d - 2 * dy
         d = d + 2 * dx
 
-def __beam_line(cells,  p0, p1):
+def beam_line(cells,  p0, p1):
 
     """
     Returns the cells covered by the beam from point p0 to p1.
@@ -194,13 +172,12 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
     cells = {}
     x1, y1 = world_to_cell_pos(pose[:2], map_size, resolution)
     for x0, y0 in scan_data:
-        __beam_line(cells, (x1, y1), (x0, y0))
+        beam_line(cells, (x1, y1), (x0, y0))
 
     # Perform log odds update on the posterior map distribution.
     for p in cells.keys():
 
         if __is_out_of_bound(p, map_size):
-            print('!')
             continue
 
         # p was observed as an obstacle.
@@ -211,15 +188,16 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
         else:
             posterior[p] = min(prev_posterior[p] + FREE, 100)
 
+
 def d3_map(posterior):
 
     log_odds_vector = np.vectorize(log_odds_to_prob)
     d = (log_odds_vector(posterior) * 255).astype(np.uint8)
     d = np.dstack((d, d, d))
 
-    return d 
+    return d
 
-def icp(prev, curr, init_tr=(0, 0, 0), iterations=50):
+def icp(prev, curr, init_tr=None, iterations=50, sd_mult=1.0, out=None):
 
     """
     @param prev: A m-by-2 numpy array where m is the number of 2-d points from
@@ -237,50 +215,41 @@ def icp(prev, curr, init_tr=(0, 0, 0), iterations=50):
     # Refs: https://stackoverflow.com/questions/20120384/,
     #       https://nghiaho.com/?page_id=671
 
-    x0, y0 = init_tr[:2]
-    h0 = init_tr[2]
-
-    src = np.copy(prev)
-    dst = np.copy(curr)
+    # Make src and dst having the same size. Usually the difference of data size
+    # from each scan is very small. The difference is the result from ignoring
+    # max length reading during each scan.
+    min_sz = min(prev.shape[0], curr.shape[0])
+    src = np.copy(prev[:min_sz])
+    dst = np.copy(curr[:min_sz])
 
     # Initinialize the transformation with initial pose estimation.
-    tr = np.array([
-        [math.cos(h0), -math.sin(h0), x0],
-        [math.sin(h0),  math.cos(h0), y0],
-        [0           ,  0           , 1 ]
-    ])
+    if init_tr is not None:
+        x0, y0 = init_tr[:2]
+        h0 = init_tr[2]
 
-    # Calculate the geometrical centroid of each point cloud.
-    centroid_src = np.mean(src, axis=0)
-    centroid_dst = np.mean(dst, axis=0)
+        tr = np.array([
+            [math.cos(h0), -math.sin(h0), x0],
+            [math.sin(h0),  math.cos(h0), y0],
+            [0           ,  0           , 1 ]
+        ])
+    else:
+        tr = np.identity(3)
 
     # Apply the rotation then translation.
     src = np.dot(tr[:2,:2], src.T).T + tr[:2,2]
 
-    initial_mean_dist = None
+    min_mse = math.inf
 
     for _ in range(iterations):
 
         # Use Neares Neighbors algorithm to find the closest point in dst for
         # each point in src.
         nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(dst)
-    
+
         distances, indices = nbrs.kneighbors(src)
-
-        if initial_mean_dist is None:
-            initial_mean_dist = np.mean(distances)
-
-        # The ratio or percentage of how close src point cloud is to the dst
-        # point cloud. A ratio of 0 means src is perfectly matched with dst
-        # (each point in src has zero distance to the corresponding cloesest
-        # point in dst). A ratio of 1 means src and dst is still in the initial
-        # state. This ratio should decrease every iteration.
-        ratio = np.mean(distances) / initial_mean_dist
-
-        # Prevent further unnecessary iterations. When the src is 95% closer to
-        # dst from its initial state, we stop.
-        if ratio < 0.05:
-            break
+        distances = distances.flatten()
+        indices = indices.flatten()
+        dst = dst[indices]
 
         # Use Singular Valued Decomposition (SVD):
         # U, S, Vt = SVD(A)
@@ -292,35 +261,54 @@ def icp(prev, curr, init_tr=(0, 0, 0), iterations=50):
         #
         # T = -R @ centroid_src + centroid_dst
 
-        a = np.zeros((2, 2))
-        for p_src, p_dst in zip(src, dst[indices.flatten()]):
-            p_src = p_src - centroid_src
-            p_dst = p_dst - centroid_dst
-            a += p_src.reshape(2, 1) @ p_dst.reshape(1, 2)
-        u, s, v = np.linalg.svd(a)
+        # mn = np.mean(distances)
+        # sd = np.std(distances)
 
-        r = v @ np.transpose(u)
-        t = -r @ centroid_src.reshape(2, 1) + centroid_dst.reshape(2, 1)
+        # inds_pair = np.where(abs(distances - mn) <= sd * sd_mult)[0]
+        # psrc = src[inds_pair]
+        # pdst = dst[inds_pair]
+
+        centroid_src = np.mean(src, axis=0)
+        centroid_dst = np.mean(dst, axis=0)
+
+        centered_src = src - centroid_src
+        centered_dst = dst - centroid_dst
+
+        s = centered_src.T @ centered_dst
+        u, _, v = np.linalg.svd(s)
+
+        rt = v @ u.T
+
+        # Rare case: reflection.
+        if np.linalg.det(rt) < 0:
+            rt[:,1] = -rt[:,1]
+
+        tt = centroid_dst.reshape(1, 2) - centroid_src.reshape(1, 2) @ rt
+
+        mse = ((dst - src) ** 2).mean()
+        if mse < min_mse:
+            min_mse = mse
+        else:
+            print('mse:', mse)
+            break
 
         # Apply the transformation on src for this iteration, moving the points
         # in src closer to dst.
-        src = np.dot(r, src.T).T + t.reshape(2)
+        src = np.dot(rt, src.T).T + tt
 
-        # Recalculate the geometrical centroid for the new src point cloud.
-        centroid_src = np.mean(src, axis=0)
-
-        tmp = np.hstack((r, t))
-        tmp = np.vstack((tmp, [0, 0, 1]))
+        tmp = np.hstack((rt, tt.reshape(2, 1)))
+        tmp = np.vstack((tmp, [0.0, 0.0, 1.0]))
 
         tr = tr @ tmp
 
-    return tr[:2, :2], tr[:2, 2].reshape(2)
+    return tr[:2, :2], tr[:2, 2].reshape(2), src
 
-def draw_square(d3_map, resolution, pose, bgr, r=3):
+def draw_square(d3_map, resolution, pose, bgr, width=3):
 
     map_size = d3_map.shape[:2]
     y0, x0 = world_to_cell_pos(pose[:2], map_size, resolution)
 
+    r = np.round(width / 2).astype(int)
     for i in range(-r, r + 1):
         for j in range(-r, r + 1):
 
@@ -338,7 +326,7 @@ def draw_vertical_line(d3_map, x_pos, bgr):
 
     for k in range(3):
         d3_map[:, x_pos, k] = bgr[k]
-        
+
 def draw_horizontal_line(d3_map, y_pos, bgr):
 
     for k in range(3):

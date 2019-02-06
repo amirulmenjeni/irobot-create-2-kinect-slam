@@ -1,0 +1,9 @@
+[submodule "libfreenect-goodies"]
+	path = libfreenect-goodies
+	url = https://github.com/amiller/libfreenect-goodies.git
+[submodule "libfreenect_goodies"]
+	path = libfreenect_goodies
+	url = https://github.com/amiller/libfreenect-goodies.git
+[submodule "icp"]
+	path = icp
+	url = https://github.com/ClayFlannigan/icp.git
