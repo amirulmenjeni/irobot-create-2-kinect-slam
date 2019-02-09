@@ -1,4 +1,3 @@
-import sys
 import serial
 import time
 import datetime
@@ -6,15 +5,15 @@ import struct
 import threading
 import math
 import numpy as np
-import scipy.ndimage as ndimg
 import cv2
-import cv2
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import csv
 import freenect
 import slam
+import rutil
 from icp import icp
+from libfreenect_goodies import calibkinect
 from serial.tools import list_ports
 from kinematic import Trajectory
 
@@ -44,114 +43,6 @@ PKT_BYTES[PKT_STATUS]   = 10
 THREAD_MOTION = 0
 THREAD_SLAM = 1
 
-class Util:
-    def to_twos_comp_2(val):
-
-        """
-        Returns the two's complement value corresponding to a signed integer
-        value as a two-tuple. The first element of the tuple is the high byte,
-        and the second element is the low byte.
-        """
-
-        if val < 0:
-            val = val + (1 << 16)
-        return ((val >> 8) & 0xff, val & 0xff)
-
-    def from_twos_comp_to_signed_int(val, byte=2):
-
-        """
-        Returns the signed integer value corresponding to a two's complment
-        n-byte binary (the default is 2).
-        """
-
-        range_max = int((2 ** (byte * 8)) / 2)
-        ones = 2 ** (byte * 8) - 1
-
-        if val > range_max:
-            val = (val ^ ones) + 1
-            return -1 * val
-        return val
-
-    def from_binary_to_unsigned_int(val):
-
-        pass
-
-    def msec_to_mmsec(val):
-        
-        """
-        Simply convert m/s to mm/s.
-        """
-
-        return val * 1000.0
-
-    def mm_to_cm(val):
-        
-        """
-        Simply convert mm to cm.
-        """
-
-        return val * 0.1
-
-    def cm_to_mm(val):
-
-        """
-        Simply convert cm to mm.
-        """
-
-        return val * 10.0
-
-    def cap(val, smallest, highest):
-        
-        """
-        Clamp a value between a smallest and a highest value (inclusive).
-        """
-
-        if val < smallest:
-            return smallest
-        elif val > highest:
-            return highest
-        return val
-
-    def is_in_circle(center, radius, position):
-
-        """
-        Check if a point at a given position is located within a circle. 
-
-        @param center:
-            The center position of the circle. A length-2 tuple.
-        @param radius:
-            The radius of the circle.
-        @param position:
-            A length-2 tuple of the position to be tested.
-        """
-
-        d = math.sqrt(((center[0] - position[0]) ** 2) +\
-                       (center[1] - position[1]) ** 2)
-
-        return d <= radius
-
-    def angle_between_vectors(vec_a, vec_b):
-
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-        return math.acos(
-            np.dot(vec_a, vec_b) / (norm_a * norm_b))
-
-    def angle_to_dir(angle):
-        x = math.cos(math.radians(angle))
-        y = math.sin(math.radians(angle))
-        return np.array([x, y])
-
-    def disp_to_angle(disp):
-        x, y = disp
-        a = math.atan2(disp[1], disp[0])
-
-        # a is in 3rd or 4th quadrant.
-        if (x <= 0 and y <= 0) or (x >= 0 and y <= 0):
-            a = 2 * math.pi - abs(a)
-
-        return math.degrees(a)
-
 class PIDController:
 
     def __init__(self, kp, ki, kd):
@@ -163,7 +54,7 @@ class PIDController:
 
     def e(self, sp, pv, mod=None):
         self.__prev_error = self.__error
-        
+
         if mod is None:
             self.__error = sp - pv
         else:
@@ -358,13 +249,13 @@ class StaticPlotter:
         x_margin = 0.05 * (self.__max_x - self.__min_x)
         y_margin = 0.05 * (self.__max_y - self.__min_y)
 
-        self.__ax1.set_ylim(ymin=self.__min_v - v_margin, 
+        self.__ax1.set_ylim(ymin=self.__min_v - v_margin,
                             ymax=self.__max_v + v_margin)
         self.__ax2.set_ylim(ymin=self.__min_w - w_margin,
                             ymax=self.__max_w + w_margin)
         self.__ax3.set_xlim(xmin=self.__min_x - x_margin,
                             xmax=self.__max_x + x_margin)
-        self.__ax3.set_ylim(ymin=self.__min_y - y_margin, 
+        self.__ax3.set_ylim(ymin=self.__min_y - y_margin,
                             ymax=self.__max_y + y_margin)
 
         self.__ax1.set_xlabel('Time')
@@ -379,7 +270,7 @@ class StaticPlotter:
         for i in range(self.__n):
             if i in self.__on_off:
                 if self.__on_off[i][0] == '1':
-                    self.__ax1.plot(self.__timestep[i], 
+                    self.__ax1.plot(self.__timestep[i],
                         self.__linear_velocity[i], self.__styles[i])
                 if self.__on_off[i][1] == '1':
                     self.__ax2.plot(self.__timestep[i],
@@ -402,8 +293,8 @@ class Robot:
         pid_v=(0, 0, 0), pid_w=(0, 0, 0)):
 
         """
-        Initialize the Robot class. 
-        
+        Initialize the Robot class.
+
         port: The serial port to connect with the iRobot Create e.g.
         '/dev/ttyUSB0'.
 
@@ -446,13 +337,8 @@ class Robot:
 
         # The position and orientation of the robot w.r.t global reference
         # frame.
-        self.__pose = (0, 0, 0)
-
-        # PID controllers.
-        # self.pid_v = PIDControler(1.5, 0.015, 0.0)
-        # self.pid_w = PIDControler(0.65, 0.05, 0.0)
-        self.pid_v = PIDController(pid_v[0], pid_v[1], pid_v[2])
-        self.pid_w = PIDController(pid_w[0], pid_w[1], pid_w[2])
+        self.__pose = np.array([0, 0, 0])
+        self.__prev_pose = np.array([0, 0, 0])
 
         # Flags.
         self.is_pid_enable = True
@@ -466,7 +352,7 @@ class Robot:
 
         self.plotter = StaticPlotter(
             3, # Plot 3 lines for each graph.
-            [self.get_pose()[:2]] * 3, 
+            [self.get_pose()[:2]] * 3,
             ['kx-', 'cx--', 'g^--'],
             {0: '111',
              1: '111',
@@ -476,6 +362,7 @@ class Robot:
 
         # SLAM related.
         self.posterior = np.zeros((500, 500))
+        self.vel_ctrl = np.array([0, 0]) # The control u_t
 
         # Initialize all threads.
         self.__init_threads()
@@ -536,7 +423,7 @@ class Robot:
         self.send_code(START)
 
     def safe_mode(self):
-        
+
         """
         Set the robot to safe mode.
         """
@@ -552,7 +439,7 @@ class Robot:
         self.send_code(FULL_MODE)
 
     def send_msg(self, opcode, byte_data):
-        
+
         """
         Deprecated. I think using send_codes is sufficient. For now.
         """
@@ -578,8 +465,8 @@ class Robot:
         try:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
-            print('Error: send_code(code) error') 
-            
+            print('Error: send_code(code) error')
+
     def send_codes(self, codes):
 
         """
@@ -591,7 +478,7 @@ class Robot:
            self.send_code(c)
 
     def recv_code(self, packet_id):
-        
+
         """
         Read from sensor. Pass the packet_id to get the buffer returned from
         requesting the sensor reading. The packet_id is a 1 byte binary.
@@ -619,10 +506,10 @@ class Robot:
                         b'\x00\x00' + read_buf[4:6])[0]
 
                 # Distance in mm, angle in degrees.
-                distance = Util.from_twos_comp_to_signed_int(distance, byte=2)
-                angle = Util.from_twos_comp_to_signed_int(angle, byte=2)
+                distance = rutil.from_twos_comp_to_signed_int(distance, byte=2)
+                angle = rutil.from_twos_comp_to_signed_int(angle, byte=2)
 
-                distance = Util.mm_to_cm(distance)
+                distance = rutil.mm_to_cm(distance)
 
                 return distance, angle
 
@@ -642,7 +529,7 @@ class Robot:
                 return charge, capacity
 
             if packet_id == PKT_DISTANCE:
-                
+
                 # The buffer received from PKT_DISTANCE is 2 bytes, but
                 # struct.unpack requires 4 bytes to convert it to integer
                 # (hence it's prepended with b'\x00\x00').
@@ -655,14 +542,14 @@ class Robot:
                 # Maximum of the integer value replied for this packet.
                 # Since i is a signed integer, we perform two's complement
                 # and get its actual value.
-                i = Util.from_twos_comp_to_signed_int(i, byte=2)
+                i = rutil.from_twos_comp_to_signed_int(i, byte=2)
 
                 # Convert from mm/s to cm/s
-                return Util.mm_to_cm(i)
+                return rutil.mm_to_cm(i)
 
             if packet_id == PKT_ANGLE:
                 i = struct.unpack('>i', b'\x00\x00' + read_buf)[0]
-                i = Util.from_twos_comp_to_signed_int(i, byte=2)
+                i = rutil.from_twos_comp_to_signed_int(i, byte=2)
                 return i
 
             if packet_id == PKT_BATT_CHG:
@@ -686,28 +573,28 @@ class Robot:
         return 0.0
 
     def drive_direct(self, lw, rw):
-    
+
         """
         Drive each left wheel (lw) and right wheel (rw) in cm/s.
         """
 
         # Convert variables from cm/s to mm/s.
-        max_speed = Util.cm_to_mm(self.max_speed)
-        lw = Util.cm_to_mm(lw)
-        rw = Util.cm_to_mm(rw)
+        max_speed = rutil.cm_to_mm(self.max_speed)
+        lw = rutil.cm_to_mm(lw)
+        rw = rutil.cm_to_mm(rw)
 
         # Cap linear speed of each wheel.
-        lw = Util.cap(lw, -max_speed, +max_speed)
-        rw = Util.cap(rw, -max_speed, +max_speed)
+        lw = rutil.cap(lw, -max_speed, +max_speed)
+        rw = rutil.cap(rw, -max_speed, +max_speed)
 
-        rw_high, rw_low = Util.to_twos_comp_2(int(rw))
-        lw_high, lw_low = Util.to_twos_comp_2(int(lw))
+        rw_high, rw_low = rutil.to_twos_comp_2(int(rw))
+        lw_high, lw_low = rutil.to_twos_comp_2(int(lw))
 
         codes = [START, FULL_MODE,
                  DRIVE_DIRECT,
                  chr(rw_high), chr(rw_low),
                  chr(lw_high), chr(lw_low)]
-            
+
         self.send_codes(codes)
 
     def drive(self, vel_forward, vel_angular, is_feedback=False):
@@ -719,10 +606,10 @@ class Robot:
         NOTE: This only update the issued_v and issued_w of the robot. The
         actual command is issued in thread_motion().
         """
-        
+
         if not is_feedback:
             self.issued_v = vel_forward
-            self.issued_w = vel_angular 
+            self.issued_w = vel_angular
 
         # v1 = vel_forward - self.__b * vel_angular
         # v2 = vel_forward + self.__b * vel_angular
@@ -739,7 +626,7 @@ class Robot:
                 (self.__pose[0], self.__pose[1], self.__pose[2],
                  targ_pos[0], next_pos[1], targ_orientation))
 
-        self.auto_trajectory = Trajectory(speed, 
+        self.auto_trajectory = Trajectory(speed,
             self.__pose[:2], self.__pose[2],
             next_pos, targ_orientation)
 
@@ -779,7 +666,7 @@ class Robot:
         self.auto_speed = speed
 
     def stop_thread(self, i):
-        
+
         """
         Stop the i-th thread in the self.threads list. The robot object maintain
         a list of flag corresponding the each thread in self.threads list called
@@ -827,70 +714,64 @@ class Robot:
         delta_time = 0.25
         SLICE_ROW = 315
         DEPTH_SHAPE_COL = 640
+        RESOLUTION = 5 # 1 pixel represents 10 cm
 
         # Default probability for each cell is log_odds(0) (i.e, 0.5).
         self.posterior.fill(0)
 
-        prev_frame = None
+        prev_cells = None
+        prev_pose = None
+
+        time.sleep(1.5)
 
         while 1:
 
             # 480 x 640 ndarray matrix.
-            depth = freenect.sync_get_depth()[0]
+            depth, _ = freenect.sync_get_depth()
 
-            # Take a slice of one whole row.
-            depth_slice = depth[SLICE_ROW:SLICE_ROW+1, :]
+            u, v = np.mgrid[:depth.shape[1], SLICE_ROW:SLICE_ROW+1]
+
+            # xyz is an Nx3 array representing 3d coordinates of objects
+            # following standard right-handed coordinate system.
+            xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
+
+            # Convert the 3d right-handed coordinate to the robot's 2d local 
+            # coordinate system.
+            x, y, z = xyz.T
+            xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+
+            # Change from m to cm.
+            curr_frame = xy * 100.0
 
             # The pose of the robot when the this scan takes place.
-            scan_pose = self.__pose
+            curr_pose = self.get_pose()
 
-            md = -1
-            curr_frame = None
-            for x, d in enumerate(depth_slice.flatten()):
+            # Transform the 2d coordinates in the robot's local coordinate
+            # system to the global coordinate system.
+            H = rutil.rigid_trans_mat3(curr_pose)
+            curr_frame = rutil.transform_pts_2d(H, curr_frame)
+ 
+            # Convert the real 2d end-points into cell position (row, column)
+            # on the grid map.
+            end_pt_cells = slam.world_frame_to_cell_pos(curr_frame,
+                self.posterior.shape, RESOLUTION)
 
-                # Ignore depth value at upper range boundary (2^11 - 1).
-                if d >= 2047:
-                    continue
-
-                # Get the world coordinate corresponding to each depth reading.
-                px, py = slam.depth_to_world_2d_pos(
-                        x, SLICE_ROW,
-                        d,
-                        DEPTH_SHAPE_COL,
-                        58.5,
-                        scan_pose
-                    )
-
-                frame = slam.world_to_cell_pos((px, py),
-                    self.posterior.shape, 10.0)
-
-                if curr_frame is None:
-                    curr_frame = np.array(frame)
-                else:
-                    curr_frame = np.vstack((curr_frame, frame))
+            # Get the cells on the occupancy grid map that is observed in the
+            # current scan.
+            curr_cells, _ = slam.observed_cells(end_pt_cells)
 
             # Scan-match the current scan frame with the previous scan frame.
-            if prev_frame is not None:
-
-                delta_pose = self.get_delta_pose()
-                delta_cell = slam.world_to_cell_pos(delta_pose[:2],
-                    self.posterior.shape, 10.0)
-                delta_angle = math.radians(delta_pose[2])
-
-                delta_pose = np.array(
-                    [delta_cell[0], delta_cell[1], delta_angle])
-
-                rot, t = slam.icp(curr_frame, prev_frame,
-                    init_tr=delta_pose, iterations=50)
-                
-                curr_frame = np.dot(rot, curr_frame.T).T + t
-                curr_frame = curr_frame.astype(int)
+            if prev_cells is not None:
+                end_pt_cells = slam.scan_match(curr_cells, prev_cells,\
+                    end_pt_cells)
 
             # Update posterior.
             slam.occupancy_grid_mapping(self.posterior,\
-                    np.copy(self.posterior), scan_pose, curr_frame[:, :2], 10.0)
+                    np.copy(self.posterior), curr_pose, end_pt_cells,\
+                    RESOLUTION)
 
-            prev_frame = np.copy(curr_frame)
+            prev_cells = np.copy(curr_cells)
+            prev_pose = np.copy(curr_pose)
 
             time.sleep(0.25)
 
@@ -917,6 +798,8 @@ class Robot:
         print('Thread motion 2 started')
 
         while True:
+
+            self.__prev_pose = np.copy(self.__pose)
 
             delta_distance, delta_angle = 0, 0
             try:
@@ -957,7 +840,7 @@ class Robot:
                     print('NEXT WAYPOINT: %s' % next_waypoint)
 
                 # Update next waypoint.
-                if Util.is_in_circle(next_waypoint, 2.5, curr_pos):
+                if rutil.is_in_circle(next_waypoint, 10.0, curr_pos):
                     self.test_song()
                     self.auto_trajectory.next()
                     if self.auto_trajectory.is_final_waypoint():
@@ -984,19 +867,23 @@ class Robot:
                 step_counter = (step_counter + 1) % step_mod
 
                 # Angle between current heading and the next heading.
-                curr_dir = Util.angle_to_dir(self.get_heading())
+                curr_dir = rutil.angle_to_dir(self.get_heading())
                 if np.linalg.norm(calc_pos) == 0:
                     calc_pos = [1, 0]
                 if prev_calc_pos is None:
                     next_dir = np.array(calc_pos)
                 else:
                     next_dir = np.array(calc_pos) - prev_calc_pos
-                error_angle = Util.angle_between_vectors(next_dir, curr_dir)
+
+                # Angle error in radians.
+                error_angle = rutil.angle_between_vectors(next_dir, curr_dir)
 
                 # Direction from PV to SP.
                 error_vector = calc_pos - curr_pos
 
-                # The direction of error in angle.
+                # The direction of error in angle. This assumes curr_dir and 
+                # next_dir is never in parallel and in opposite direction to
+                # each other.
                 angle_dir = 0
                 cross_prod = np.cross(curr_dir, next_dir)
                 if cross_prod > 0:
@@ -1008,7 +895,7 @@ class Robot:
 
                 pid_x.e(calc_pos[0], curr_pos[0])
                 pid_y.e(calc_pos[1], curr_pos[1])
-                pid_a.e(Util.disp_to_angle(calc_pos), a, mod=360)
+                pid_a.e(rutil.disp_to_angle(calc_pos), a, mod=360)
 
                 out_x = error_vector[0] +\
                     pid_x.P() + pid_x.I(delta_time) + pid_x.D(delta_time)
@@ -1021,18 +908,23 @@ class Robot:
                 out_w = out_a
 
                 # Update sensor reading plot.
-                self.plotter.add_plot(0, timestep, 
+                self.plotter.add_plot(0, timestep,
                     curr_pos[0], curr_pos[1],
                     read_v, read_w)
 
                 if step_counter % step_mod == 0:
+
+                    self.vel_ctrl = np.array(out_v, out_a)
+
                     v1, v2 = Robot.__inverse_drive(
-                        out_v, out_w, self.__b) 
+                        out_v, out_w, self.__b)
                     self.drive_direct(v1, v2)
 
                 timestep += delta_time
 
             else:
+                self.vel_ctrl = np.array([self.issued_v, self.issued_w])
+
                 # Manual driving.
                 v1, v2 = Robot.__inverse_drive(
                     self.issued_v, self.issued_w, self.__b)
@@ -1096,7 +988,7 @@ class Robot:
                     next_pos = self.auto_trajectory.displacement(
                         self.auto_end_time)
 
-                    if not Util.is_in_circle(next_pos, 15.0,
+                    if not rutil.is_in_circle(next_pos, 15.0,
                         self.__pose[:2]):
 
                         self.is_autonomous = False
@@ -1119,7 +1011,7 @@ class Robot:
                                 self.auto_trajectory.estimate_time_between_points(
                                     self.auto_trajectory.get_speed(),
                                     self.auto_trajectory.current())
-                            self.auto_end_time = self.auto_end_time + time_estimate 
+                            self.auto_end_time = self.auto_end_time + time_estimate
                             self.auto_t0 = self.auto_timestep
 
                 # If the current waypoint (i.e., the latest reached waypoint)
@@ -1134,17 +1026,17 @@ class Robot:
                         input_v, input_w, self.__b)
 
                     # Update sensor reading plot.
-                    self.plotter.update_plot(0, delta_time, 
+                    self.plotter.update_plot(0, delta_time,
                         delta_distance, delta_angle,
                         read_v, read_w)
 
                     # Update trajectory calculation plot.
-                    self.plotter.update_plot(1, delta_time, 
+                    self.plotter.update_plot(1, delta_time,
                         input_v * delta_time,
                         math.degrees(input_w) * delta_time,
                         input_v, math.degrees(input_w))
 
-                    # self.plotter.update_plot(2, delta_time, 
+                    # self.plotter.update_plot(2, delta_time,
                     #     controlled_v * delta_time, math.degrees(w) * delta_time,
                     #     controlled_v, math.degrees(controlled_w))
 
@@ -1194,7 +1086,7 @@ class Robot:
             t = time.time()
             delta_distance = self.get_sensor(PKT_DISTANCE)
             t = time.time() - t
-            t = Util.cap(t, 0, t + 0.5)
+            t = rutil.cap(t, 0, t + 0.5)
 
             print('delta distance:', delta_distance)
             print('speed:', float(float(delta_distance) / t))
@@ -1206,13 +1098,13 @@ class Robot:
             t = time.time()
             delta_angle = self.get_sensor(PKT_ANGLE)
             t = time.time() - t
-            t = Util.cap(t, 0, t + 0.5)
+            t = rutil.cap(t, 0, t + 0.5)
             print('delta angle:', delta_angle)
             total_angle += delta_angle
             print('total angle:', total_angle)
 
             print('angular speed:', float(float(delta_angle) / t))
-            
+
             delta_distance = self.get_sensor(PKT_DISTANCE)
             print('delta distance:', delta_distance)
             time.sleep(rate)
@@ -1227,11 +1119,11 @@ class Robot:
         return self.ser.is_open
 
     def reconnect(self):
-    
+
         """
         Reconnect the serial.
         """
-            
+
         self.ser.close()
         self.ser = serial.Serial(port, self.baudrate, timeout=1)
         self.ser = Serial(port, self.baudrate, timeout=1)
@@ -1243,7 +1135,7 @@ class Robot:
         """
 
         charge, capacity = self.get_sensor(PKT_STATUS)
-        return float(charge / capacity)
+        return charge / float(capacity)
 
     def get_sensor(self, packet_id):
 
@@ -1277,8 +1169,11 @@ class Robot:
         Returns the position of the robot in cartesian coordinate of in the
         inertial reference frame.
         """
-
         return self.__pose
+
+    def get_prev_pose(self):
+
+        return self.__prev_pose
 
     def get_position(self):
 
@@ -1290,7 +1185,8 @@ class Robot:
 
     def reset_pose(self):
 
-        self.__pose = (0, 0, 0)
+        self.__pose = np.array([0, 0, 0])
+        self.__prev_pose = np.array([0, 0, 0])
 
     def get_delta_distace(self):
         return self.__delta_distance
@@ -1311,7 +1207,7 @@ class Robot:
 
     def enable_pid(self):
         self.is_pid_enable = True
-        
+
     def disable_pid(self):
         self.is_pid_enable = False
 
@@ -1323,7 +1219,7 @@ class Robot:
         distance and delta angle given is taken at a consistent time ticks.
 
         Parameters:
-            delta_distance: 
+            delta_distance:
                 The distance traveled within a consistent time tick.
             delta_angle:
                 The change in angle within a consistent time tick.
