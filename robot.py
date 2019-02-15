@@ -12,6 +12,7 @@ import csv
 import freenect
 import slam
 import rutil
+import config
 from icp import icp
 from libfreenect_goodies import calibkinect
 from serial.tools import list_ports
@@ -361,8 +362,14 @@ class Robot:
         self.__is_timestep_end = False
 
         # SLAM related.
-        self.posterior = np.zeros((500, 500))
+        self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
         self.vel_ctrl = np.array([0, 0]) # The control u_t
+        self.particle_filter = slam.ParticleFilter(
+            config.CONTROL_DELTATIME,\
+            self.occ_grid_map.shape,\
+            config.GRID_MAP_RESOLUTION,\
+            num_particles=100)
+        self.curr_scan = None
 
         # Initialize all threads.
         self.__init_threads()
@@ -714,10 +721,7 @@ class Robot:
         delta_time = 0.25
         SLICE_ROW = 315
         DEPTH_SHAPE_COL = 640
-        RESOLUTION = 5 # 1 pixel represents 10 cm
-
-        # Default probability for each cell is log_odds(0) (i.e, 0.5).
-        self.posterior.fill(0)
+        RESOLUTION = config.GRID_MAP_RESOLUTION
 
         prev_cells = None
         prev_pose = None
@@ -726,22 +730,10 @@ class Robot:
 
         while 1:
 
-            # 480 x 640 ndarray matrix.
-            depth, _ = freenect.sync_get_depth()
-
-            u, v = np.mgrid[:depth.shape[1], SLICE_ROW:SLICE_ROW+1]
-
-            # xyz is an Nx3 array representing 3d coordinates of objects
-            # following standard right-handed coordinate system.
-            xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
-
-            # Convert the 3d right-handed coordinate to the robot's 2d local 
-            # coordinate system.
-            x, y, z = xyz.T
-            xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-
-            # Change from m to cm.
-            curr_frame = xy * 100.0
+            # Get the x-y-locations of obstacles projected from kinect's depth
+            # map.
+            frame_local = self.get_kinect_xy(SLICE_ROW)
+            self.curr_scan = frame_local
 
             # The pose of the robot when the this scan takes place.
             curr_pose = self.get_pose()
@@ -749,16 +741,18 @@ class Robot:
             # Transform the 2d coordinates in the robot's local coordinate
             # system to the global coordinate system.
             H = rutil.rigid_trans_mat3(curr_pose)
-            curr_frame = rutil.transform_pts_2d(H, curr_frame)
+            frame_global = rutil.transform_pts_2d(H, frame_local)
  
             # Convert the real 2d end-points into cell position (row, column)
             # on the grid map.
-            end_pt_cells = slam.world_frame_to_cell_pos(curr_frame,
-                self.posterior.shape, RESOLUTION)
+            end_pt_cells = slam.world_frame_to_cell_pos(frame_global,
+                self.occ_grid_map.shape, RESOLUTION)
 
             # Get the cells on the occupancy grid map that is observed in the
             # current scan.
-            curr_cells, _ = slam.observed_cells(end_pt_cells)
+            pos_cell = slam.world_to_cell_pos(curr_pose[:2],\
+                self.occ_grid_map.shape, RESOLUTION)
+            curr_cells, _ = slam.observed_cells(pos_cell, end_pt_cells)
 
             # Scan-match the current scan frame with the previous scan frame.
             if prev_cells is not None:
@@ -766,8 +760,8 @@ class Robot:
                     end_pt_cells)
 
             # Update posterior.
-            slam.occupancy_grid_mapping(self.posterior,\
-                    np.copy(self.posterior), curr_pose, end_pt_cells,\
+            slam.occupancy_grid_mapping(self.occ_grid_map,\
+                    np.copy(self.occ_grid_map), curr_pose, end_pt_cells,\
                     RESOLUTION)
 
             prev_cells = np.copy(curr_cells)
@@ -787,7 +781,7 @@ class Robot:
         timestep = 0
         t0 = 0
         step_counter = 0
-        step_mod = 4
+        step_mod = 1
 
         pid_x = PIDController(0.15, 0, 0)
         pid_y = PIDController(0.15, 0, 0)
@@ -882,8 +876,8 @@ class Robot:
                 error_vector = calc_pos - curr_pos
 
                 # The direction of error in angle. This assumes curr_dir and 
-                # next_dir is never in parallel and in opposite direction to
-                # each other.
+                # next_dir is never in parallel and never in opposite direction
+                # to each other.
                 angle_dir = 0
                 cross_prod = np.cross(curr_dir, next_dir)
                 if cross_prod > 0:
@@ -904,23 +898,27 @@ class Robot:
                 out_a = error_angle +\
                     pid_a.P() + pid_a.I(delta_time) + pid_a.D(delta_time)
 
-                out_v = np.linalg.norm([out_x, out_y])
-                out_w = out_a
-
                 # Update sensor reading plot.
                 self.plotter.add_plot(0, timestep,
                     curr_pos[0], curr_pos[1],
                     read_v, read_w)
 
+                out_v = np.linalg.norm([out_x, out_y])
+                out_w = out_a
+
                 if step_counter % step_mod == 0:
 
-                    self.vel_ctrl = np.array(out_v, out_a)
+                    self.vel_ctrl = np.array([out_v, out_w])
 
                     v1, v2 = Robot.__inverse_drive(
                         out_v, out_w, self.__b)
                     self.drive_direct(v1, v2)
 
                 timestep += delta_time
+
+                if self.curr_scan is not None:
+                    self.particle_filter.update(self.curr_scan, self.vel_ctrl,\
+                        self.get_pose(), self.occ_grid_map)
 
             else:
                 self.vel_ctrl = np.array([self.issued_v, self.issued_w])
@@ -1154,6 +1152,27 @@ class Robot:
         """
 
         return (self.__v, self.__w)
+
+    def get_kinect_xy(self, slice_row):
+
+        # 480 x 640 ndarray matrix.
+        depth, _ = freenect.sync_get_depth()
+
+        u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
+
+        # xyz is an Nx3 array representing 3d coordinates of objects
+        # following standard right-handed coordinate system.
+        xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
+
+        # Convert the 3d right-handed coordinate to the robot's 2d local 
+        # coordinate system.
+        x, y, z = xyz.T
+        xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+
+        # Change from m to cm.
+        frame_local = xy * 100.0
+
+        return frame_local
 
     def get_delta_pose(self):
 

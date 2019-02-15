@@ -3,64 +3,161 @@ import cv2
 import math
 import numpy as np
 import time
+import bisect
 import rutil
+import scipy.stats as st
 from icp import icp
 from sklearn.neighbors import NearestNeighbors
 
-class ParticleFilter():
-
-    def __init__(self, num_particles=2000):
-        pass
-
-def transform_2d_points(a, m):
+class ParticleFilter:
 
     """
-    @param a:
-        A Nx2 numpy array containing a list of 2d points.
-    @param m:
-        A homogeneous transformation matrix.
+    Use particle filter to implement Monte Carlo Localization (MCL).
     """
 
-    a = np.hstack( (a, np.ones((a.shape[0], 1))) )
+    def __init__(self, deltatime, map_size, res, num_particles=2000):
 
-    for i in range(a.shape[0]):
-        a[i] = m @ a[i]
+        # Compute the range of the real world coordinates that the initial grid
+        # map size (map_size) holds. This is so that the particles can be
+        # randomly and uniformly distributed across the map within the
+        # calculated range.
+        num_row, num_col = map_size
+        last_row, last_col = num_row - 1, num_col - 1
+        min_x, max_y = cell_to_world_pos((0, 0), map_size, res)
+        max_x, min_y = cell_to_world_pos((last_row, last_col), map_size, res)
+        range_x = (min_x, max_x)
+        range_y = (min_y, max_y)
+        range_h = (0, 360)
 
-    return a[:, :2]
+        self.NUM_PARTICLES = num_particles
+        self.MAP_RANGE_X = range_x
+        self.MAP_RANGE_Y = range_y
 
-def log_odds_to_prob(k):
+        # Uniform weight distribution initially.
+        weight = 1 / num_particles
 
-    """
-    Convert the log odds notation k to the corresponding probability value
-    ranging [0, 1].
-    """
+        self.resolution = res
+        self.particles = [\
+            Particle.create_random(range_x, range_y, range_h, weight) for _ in\
+                range(num_particles)]
+        self.deltatime = deltatime
 
-    return 1.0 - (1.0 / (1.0 + math.exp(k)))
+    def update(self, z, u, x, m, occ_thres=0.75):
 
-def prob_to_log_odds(p):
+        """
+        @param z:
+            The 2-d real coordinates points projected by the depth map in the
+            local reference frame.
+        @param u:
+            The control command for the current time step. This is a size-2
+            array with values [linear_velocity, and rotational_velocity].
+        @param x:
+            The current state (pose) of the robot. This is a size-3 array with
+            values [pos_x, pos_y, heading_degree]
+        @param m:
+            The occupancy grid map, a 2-D numpy array.
+        @param occ_thres:
+            The probability value above which a cell is considered occupied.
+        """
 
-    """
-    Convert the probability value p to its log odds notation.
-    """
+        X = []
 
-    return math.log10(p / (1.0 - p))
+        # observed_cells() use bresenham-line algorithm which is computationally
+        # expensive large number of particles. Instead we can compute the local
+        # observed cells once and transform later according to the pose of each
+        # particle.
+        end_pt_cells = world_frame_to_cell_pos(z, m.shape, self.resolution)
+        origin_cell = world_to_cell_pos((0, 0), m.shape, self.resolution)
+        obs_cells, cell_dict = observed_cells(origin_cell, end_pt_cells)
+        obsr_mat = observation_matrix(cell_dict)
 
-def cell_to_world_pos(cell, map_size, resolution):
+        for p in self.particles:
+
+            i, j = world_to_cell_pos(p.x[:2], m.shape, self.resolution)
+
+            # If a particle is in an occupied cell (i, j), set its weight to 0.
+            # Otherwise, compute its new weight.
+            if m[i, j] < occ_thres:
+                u_noise = (1e-3, 1e-3, 3e-6, 3e-6, 3e-4, 3e-4)
+                x = sample_motion_model_velocity(u, p.x, self.deltatime,\
+                        u_noise)
+                w = correlation_measurement_model(obsr_mat, p.x, m,
+                        self.resolution)
+            else:
+                w = 0
+
+            p_ = Particle(x, w)
+
+            X.append(p_)
+
+        # Resampling.
+        self.particles = ParticleFilter.low_variance_sampler(X)
+
+    def low_variance_sampler(particles):
+
+        """
+        Algorithm for reducing sampling error.
+        """
+
+        X_ = []
+        n = len(particles)
+        r = np.random.uniform(0, 1 / n)
+        c = particles[0].w
+
+        i = 0
+        for m in range(n):
+            u = r + m / n
+            while u > c:
+                i = i + 1
+                c = c + particles[i].w
+            X_.append(particles[i])
+
+        return X_
+
+class Particle:
+
+    def __init__(self, state, weight):
+
+        self.x = state
+        self.w = weight
+
+    def create_random(range_x, range_y, range_h, weight):
+
+        x = np.random.uniform(range_x[0], range_x[1])
+        y = np.random.uniform(range_y[0], range_y[1])
+        h = np.random.uniform(range_h[0], range_h[1])
+
+        return Particle(np.array([x, y, h]), weight)
+
+def cell_to_world_pos(cell, map_size, resolution, center=False):
 
     """
     Returns the world position corresponding the given grid cell position.
 
     @param cell:
-        2-tuple grid cell position (column, row).
+        2-tuple grid cell position (row, col), or Nx2 numpy array of grid
+        cell positions.
     @param map_size:
         2-tuple shape of the map array shape (row_size, column_size).
     """
 
-    mx, my = map_size
-    cx, cy = cell
-    x = (cx - mx / 2) * resolution
-    y = (my / 2 - cy) * resolution
-    return (x, y)
+    c = np.array(cell)
+
+    if c.ndim == 1:
+        my, mx = map_size
+        row, col = c
+        y = (my/2 - row) * resolution
+        x = (col - mx/2) * resolution
+        wpos = np.array([x, y])
+    else:
+        sz = np.array(map_size)
+        wpos = (c*np.array([-1, 1]) + sz*np.array([1/2, -1/2])) * resolution
+        wpos = wpos[:,::-1]
+
+    if center:
+        wpos += np.array([resolution / 2, resolution / 2])
+
+    return wpos
 
 def world_to_cell_pos(wpos, map_size, resolution):
 
@@ -105,11 +202,13 @@ def observed_cells(pos, end_pt_cells):
 
     """
     Returns an Nx2 numpy array whose rows are the 2-D grid map coordinates of
-    all cells observed in the current scan.
+    all cells observed in the current scan, a size-N dictionary whose keys are
+    the 2-D grid map coordinate each with either value 1 or 0 indicating
+    occupied or free cell.
 
     @param pos:
         A size-2 numpy array, representing the position of the scan device or
-        robot in the global reference frame of the occupancy grid map.
+        robot in the the occupancy grid map.
     @param end_pt_cells:
         An Nx2 whose rows are the 2-D grid map coordinates corresponding to the
         real-world location end-point projected by the depth map.
@@ -122,14 +221,61 @@ def observed_cells(pos, end_pt_cells):
 
     return np.array(list(cells.keys())), cells
 
-def __is_out_of_bound(cells, map_size):
+def observation_matrix(cell_dict):
+
+    """
+    Returns an Nx3 numpy array where each row [row, col, v] represents the row,
+    column, and occupancy value of each observed cell on th grid map. 
+
+    @param cell_dict:
+        Dictionary {[row, col] => v} where [row, col] is a cell in the grid map
+        and v is the occupancy value on that cell.
+    """
+
+    a = np.zeros((len(cell_dict), 3), dtype=int)
+    for i, d in enumerate(cell_dict.items()):
+        row, col = d[0]
+        val = d[1]
+        a[i] = [row, col, val]
+    return a
+
+def observation_map(cell_dict, map_size):
+
+    m = np.full(map_size, 0.5)
+    for k, v in cell_dict.items():
+        m[k] = v
+    return m
+
+def observation_mask(obs_map, free_thres=0.30, occu_thres=0.75):
+
+    """
+    Returns the mask corresponding to the local map obtain from the robot's
+    scan.
+
+    @param obs_map:
+        An MxN array where MxN is the shape of the occupancy grid map.
+    @param free_thres:
+        A cell with value less than this threshold will be marked as free.
+    @param occu_thres:
+        A cell with value greater than this threshold will be marked as free.
+    """
+
+    assert 0.00 < free_thres < 0.50
+    assert 0.50 < occu_thres < 1.00
+
+    mask_free = cv2.inRange(obs_map, 0.00, free_thres)
+    mask_occu = cv2.inRange(obs_map, occu_thres, 1.00)
+
+    return cv2.bitwise_or(mask_free, mask_occu)
+
+def is_out_of_bound(cell, map_size):
 
     """
     Checks if the cell is out of bound given the map size.
     """
 
-    if cells[0] >= (map_size[1] - 1) or cells[1] >= map_size[0] or\
-       cells[0] < 0 or cells[1] < 0:
+    if cell[0] >= (map_size[1] - 1) or cell[1] >= map_size[0] or\
+       cell[0] < 0 or cell[1] < 0:
            return True
     return False
 
@@ -157,7 +303,7 @@ def __line_low(cells, p0, p1):
     for x in range(x0, x1 + 1):
 
         if (x, y) not in cells:
-            cells[(x, y)] = False
+            cells[(x, y)] = 0 
 
         if d > 0:
             y = y + yi
@@ -187,7 +333,7 @@ def __line_high(cells, p0, p1):
     for y in range(y0, y1 + 1):
 
         if (x, y) not in cells:
-            cells[(x, y)] = False
+            cells[(x, y)] = 0 
 
         if d > 0:
             x = x + xi
@@ -209,7 +355,7 @@ def beam_line(cells,  p0, p1):
 
     # Mark the cell as occupied. This is does not reflect the distribution of
     # the map. This simply mark p1 as the cell where an obstacle is detected.
-    cells[p1] = True
+    cells[p1] = 1
 
     if abs(y1 - y0) < abs(x1 - x0):
         if x0 > x1:
@@ -264,16 +410,18 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
     # Perform log odds update on the posterior map distribution.
     for p in cells.keys():
 
-        if __is_out_of_bound(p, map_size):
+        if is_out_of_bound(p, map_size):
             continue
 
         # p was observed as an obstacle.
         if cells[p]:
-            posterior[p] = min(prev_posterior[p] + OCCU, 100)
+            logit = rutil.prob_to_log_odds(prev_posterior[p]) + OCCU
+            posterior[p] = rutil.log_odds_to_prob(logit)
 
         # p was not observed as an obstacle.
         else:
-            posterior[p] = min(prev_posterior[p] + FREE, 100)
+            logit = rutil.prob_to_log_odds(prev_posterior[p]) + FREE
+            posterior[p] = rutil.log_odds_to_prob(logit)
 
 def scan_match(src_pts, dst_pts, pts):
 
@@ -304,7 +452,7 @@ def scan_match(src_pts, dst_pts, pts):
     Tt = tran[:2,2].T
 
     new_pts = np.dot(Rt, pts.T).T + Tt
-    new_pts = matched_cells.round(0).astype(int)
+    new_pts = new_pts.round(0).astype(int)
 
     return new_pts 
 
@@ -399,47 +547,51 @@ def sample_motion_model_velocity(control, curr_pose, dt,
 
     return np.array([x1, y1, np.degrees(h1)])
 
-def likelihood_field_model(scan_data, curr_pose, posterior):
+def likelihood_field_measurement_model(z, x, gmap, occ_cells, res,
+        mean=6.3, sd=2.31458)
 
     """
-    Compute the probability p(z[k]_t, | x_t, m).
+    Compute the probability p(z_t, | x_t, m).
+
+    @param z:
+        An Nx2 array for N observed obstacle points in real 2-D coordinates.
+    @param x:
+        The state or pose of the particle.
+    @param occ_cells:
+        An Mx2 array for M obstacle cells in the occupancy grid map.
+    @param mean:
+        The expected (mean value) of the mean distance between obstacle points
+        from scan data and the obstacle points on the map.
+    @param sd:
+        The standard deviation of the distances d_i where d_i is the nearest
+        distance of each observed obstacle points p_i to the nearest obstacle
+        points P_i on the map when the mean value is mean (param).
     """
 
-    q = 1
+    if len(occ_cells) == 0:
+        return 0
 
-    # Weight of probability for the depth scan z to hit the "True" range,
-    # weight of failure (max value measurement) probability, and weight of
-    # random noise probability. 
-    z_hit = 1
-    z_max = 1
-    z_random = 1
+    # Transform z to be in the global reference frame.
+    H = rutil.rigid_trans_mat3(x)
+    z = rutil.transform_pts_2d(H, z)
 
-    # The standard deviation of the 1-D Gaussian distribution of measurement
-    # noise of z.
-    sigma_hit = 1
+    occ_pts = cell_to_world_pos(occ_cells, gmap.shape, res, center=True)
 
-    grid_map = posterior_prob_dist(posterior_map)
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(occ_pts)
 
-    nbrs = NearestNeighbors(n_neighbors=1).fit(\
-        np.argwhere(grid_map > 0.5))
+    dist, inds = nbrs.kneighbors(z)
 
-    for row, col in scan_data:
+    m = np.mean(dist)
 
-        if grid_map[row, col] == 0.5:
-            k = 1 / z_max
-        else:
-            src = np.array(row, col).reshape(-1, 1)
+    Z = (m - mean) / sd
 
-            # Get the nearest obstacle cell.
-            dist, inds = nbrs.kneighbors(src)
+    # Find the probability that random variable m is within 
+    # +/- one standard deviation away from the zero-centered mean.
+    prob = st.norm(0, 1).cdf(Z + sd) - st.norm(0, 1).cdf(Z - sd)
 
-            k = prob_normal_distribution(dist, sigma_hit**2) + (z_random / z_max)
+    return prob
 
-        q = q * k
-
-    return q
-
-def map_matching_measurement_model(pose, scan_end_pts, ogm_posterior, ogm_res):
+def correlation_measurement_model(obsr_mat, pose, grid_map, resolution):
 
     """
     Compute the probability p(z_t | x_t, m) i.e., the probability that the
@@ -449,52 +601,61 @@ def map_matching_measurement_model(pose, scan_end_pts, ogm_posterior, ogm_res):
     Here, x_t corresponds to the pose, m corresponds to the ogm_posterior, and
     z_t corresponds to the scan_end_pts.
 
-    @param pose:
-        Pose of robot or particle, a size-3 1-D numpy array.
-    @param scan_end_pts:
-        An Nx3 numpy array consisting of the real 2-D coordinates projected by
-        the depth scan map.
-    @param ogm_posterior:
-        The posterior distribution in log odds form of the occupancy grid map.
-    @param ogm_res:
-        The resolution of the occupancy grid map ogm_posterior.
+    Ref: Probabilistic Robotics, Ch. 4.
+         See also https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
     """
 
-    rpos_grid = world_to_cell_pos(pose[:2], ogm_posterior.shape, ogm_res)
-
-    grid_map = posterior_prob_dist(ogm_posterior)
-
-    # Transform the scan_end_pts to the global reference frame, so that they
-    # share the same reference frame as the occupancy grid map to be compared.
+    z = cell_to_world_pos(obsr_mat[:,:2], grid_map.shape, resolution)
     H = rutil.rigid_trans_mat3(pose)
-    scan_end_pts = rutil.transform_pts_2d(H, scan_end_pts)
+    z = rutil.transform_pts_2d(H, z)
 
-    # The cell locations of the local map generated by the scan z_t.
-    end_pt_cells = world_frame_to_cell_pos(scan_end_pts, ogm_posterior.shape,
-        ogm_res)
-    loc_cells, local_map = observed_cells(rpos_grid, end_pt_cells)
+    n = obsr_mat.shape[0]
 
-    # The number of overlaps between local map from recent scan and the global
-    # map (occupancy grid map).
-    n = len(loc_cells)
+    glob_mat = np.zeros((n, 3))
+    for i, k in enumerate(obsr_mat):
+        row, col, val = k
+        glob_mat[i] = [row, col, grid_map[row, col]]
 
-    locs = loc_cells.tolist()
+    m = np.sum(obsr_mat[:,2] + glob_mat[:,2]) / (2*n)
+    a = np.sum((glob_mat[:,2] - m) * (obsr_mat[:,2] - m))
+    b = np.sum((glob_mat[:,2] - m)**2)
+    c = np.sum((obsr_mat[:,2] - m)**2)
+    ppc = a / (math.sqrt(b*c))
 
-    # Calculate the mean map.
-    m = sum([grid_map[i,j] + local_map[i,j] for (i,j) in locs]) / (2*n)
+    return max(0, ppc)
 
-    # Calculate the correlaction between the local map (generatd from the scan
-    # z_t) and the global map. The correlation scales between -1 to +1. Map
-    # matching interprets the value max(a/b, 0) as the probability p(m_local |
-    # x_t, m) which substitutes the probability p(z_t | x_t, m) when the local
-    # map is generated from the scan z_t.
-    a = sum([(grid_map[i,j] - m) * (local_map[i,j] - m) for (i,j) in locs])
-    b = sum([(grid_map[i,j] - m)**2 for (i,j) in locs]) *\
-        sum([(local_map[i,j] - m)**2 for (i,j) in locs])
-    b = math.sqrt(b)
-    prob = max(a/b, 0)
+def correlation_measurement_model2(obs_map, pose, grid_map, mask, resolution):
 
-    return prob
+    # Convert the spatial measurement to grid map's resolution. Used for
+    # applying transformation on 2-D array map.
+    grid_pose = np.array([pose[0] / resolution, pose[1] / resolution, pose[2]])
+
+    # Get the mask that cover the observation map on the global map. Transform
+    # this mask to the orient it in the global reference frame.
+    mask = rutil.transform_map(grid_pose, mask)
+
+    # Apply the mask to the grid map, and transform it back to the robot's local
+    # reference frame so we can compare the masked grid map and the local map.
+    gmap = cv2.bitwise_and(grid_map, grid_map, mask=mask)
+    gmap = rutil.transform_map(-grid_pose, gmap)
+
+    gmap = gmap[gmap > 1e-3]
+    lmap = obs_map[abs(obs_map - 0.5) > 1e-6]
+
+    # # The number of overlapping cells size of lmap or size of gmap.
+    n = len(lmap)
+
+    # # The mean distribution of global and local observation map.
+    m = np.sum(gmap + lmap) / (2*n)
+
+    # # Calculate Pearson correlation coefficient (PPC) between both map.
+    a = np.sum((gmap - m) * (lmap - m))
+    b = np.sqrt(np.sum((gmap - m)**2) * np.sum((lmap - m)**2))
+    ppc = a/b
+
+    # Since PPC can have values from -1 to +1, we take the negative values as 0.
+    # Return the probability p(z_t, | x_t, m).
+    return max(0, ppc)
 
 def sample_normal_distribution(b_sq):
 
@@ -506,7 +667,7 @@ def sample_normal_distribution(b_sq):
 
 def prob_normal_distribution(a, b_sq):
 
-    return math.sqrt(2*math.pi*b_sq) * math.exp(-0.5*(a**2) / b_sq)
+    return (1 / math.sqrt(2*math.pi*b_sq)) * math.exp(-0.5*(a**2) / b_sq)
 
 def posterior_prob_dist(posterior):
 
@@ -515,12 +676,8 @@ def posterior_prob_dist(posterior):
     odds form to real probability with values ranging from 0.0 to 1.0.
     """
 
-    log_odds_vector = np.vectorize(log_odds_to_prob)
+    log_odds_vector = np.vectorize(rutil.log_odds_to_prob)
     return log_odds_vector(posterior)
-
-def monte_carlo_localization(particles):
-
-    pass
 
 def d3_map(posterior, invert=False):
 
@@ -529,146 +686,10 @@ def d3_map(posterior, invert=False):
     (BGR). The probability value in each cell is normalized from 0 to 255.
     """
 
-    posterior_distribution = posterior_prob_dist(posterior)
-    d = (posterior_distribution * 255).astype(np.uint8)
+    d = (posterior * 255).astype(np.uint8)
     d = np.dstack((d, d, d))
 
     if invert:
         d = 255 - d
 
     return d
-
-def icp(prev, curr, init_tr=None, iterations=50, sd_mult=1.0, out=None):
-
-    """
-    @param prev: A m-by-2 numpy array where m is the number of 2-d points from
-    previous scan.
-    @param curr: A m-by-2 numpy array where m is the number of 2-d points from
-    current scan.
-    @param init_tr: Initial transformation of the robot in [dx, dy, d_radian]^T
-    @iterations: The number of iterations for the ICP algorithm.
-
-    @output r, t: Returns a 2-by-2 rotation matrix and a size-2 array
-    translation vector to transform the points in prev to match the points in
-    curr.
-    """
-
-    # Refs: https://stackoverflow.com/questions/20120384/,
-    #       https://nghiaho.com/?page_id=671
-
-    # Make src and dst having the same size. Usually the difference of data size
-    # from each scan is very small. The difference is the result from ignoring
-    # max length reading during each scan.
-    min_sz = min(prev.shape[0], curr.shape[0])
-    src = np.copy(prev[:min_sz])
-    dst = np.copy(curr[:min_sz])
-
-    # Initinialize the transformation with initial pose estimation.
-    if init_tr is not None:
-        x0, y0 = init_tr[:2]
-        h0 = init_tr[2]
-
-        tr = np.array([
-            [math.cos(h0), -math.sin(h0), x0],
-            [math.sin(h0),  math.cos(h0), y0],
-            [0           ,  0           , 1 ]
-        ])
-    else:
-        tr = np.identity(3)
-
-    # Apply the rotation then translation.
-    src = np.dot(tr[:2,:2], src.T).T + tr[:2,2]
-
-    min_mse = math.inf
-
-    for _ in range(iterations):
-
-        # Use Neares Neighbors algorithm to find the closest point in dst for
-        # each point in src.
-        nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(dst)
-
-        distances, indices = nbrs.kneighbors(src)
-        distances = distances.flatten()
-        indices = indices.flatten()
-        dst = dst[indices]
-
-        # Use Singular Valued Decomposition (SVD):
-        # U, S, Vt = SVD(A)
-        #
-        # The rotation R can be computed as:
-        # R = Vt @ transpose(U)
-        #
-        # And the translation:
-        #
-        # T = -R @ centroid_src + centroid_dst
-
-        # mn = np.mean(distances)
-        # sd = np.std(distances)
-
-        # inds_pair = np.where(abs(distances - mn) <= sd * sd_mult)[0]
-        # psrc = src[inds_pair]
-        # pdst = dst[inds_pair]
-
-        centroid_src = np.mean(src, axis=0)
-        centroid_dst = np.mean(dst, axis=0)
-
-        centered_src = src - centroid_src
-        centered_dst = dst - centroid_dst
-
-        s = centered_src.T @ centered_dst
-        u, _, v = np.linalg.svd(s)
-
-        rt = v @ u.T
-
-        # Rare case: reflection.
-        if np.linalg.det(rt) < 0:
-            rt[:,1] = -rt[:,1]
-
-        tt = centroid_dst.reshape(1, 2) - centroid_src.reshape(1, 2) @ rt
-
-        mse = ((dst - src) ** 2).mean()
-        if mse < min_mse:
-            min_mse = mse
-        else:
-            print('mse:', mse)
-            break
-
-        # Apply the transformation on src for this iteration, moving the points
-        # in src closer to dst.
-        src = np.dot(rt, src.T).T + tt
-
-        tmp = np.hstack((rt, tt.reshape(2, 1)))
-        tmp = np.vstack((tmp, [0.0, 0.0, 1.0]))
-
-        tr = tr @ tmp
-
-    return tr[:2, :2], tr[:2, 2].reshape(2), src
-
-def draw_square(d3_map, resolution, pose, bgr, width=3):
-
-    map_size = d3_map.shape[:2]
-    y0, x0 = world_to_cell_pos(pose[:2], map_size, resolution)
-
-    r = np.round(width / 2).astype(int)
-    for i in range(-r, r + 1):
-        for j in range(-r, r + 1):
-
-            x = x0 + i
-            y = y0 + j
-
-            if x < 0 or x >= map_size[1] or\
-               y < 0 or y >= map_size[0]:
-                continue
-
-            for k in range(3):
-                d3_map[y, x, k] = bgr[k]
-
-def draw_vertical_line(d3_map, x_pos, bgr):
-
-    for k in range(3):
-        d3_map[:, x_pos, k] = bgr[k]
-
-def draw_horizontal_line(d3_map, y_pos, bgr):
-
-    for k in range(3):
-        d3_map[y_pos, :, k] = bgr[k]

@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 import slam
+import math
+import imdraw_util as imdraw
 
 def main():
 
@@ -8,7 +10,7 @@ def main():
     Demo of probabilistic motion model.
     """
 
-    curr_pose = np.array([0, 0, 0])
+    curr_pose = np.array([0, 0, 90])
     control = np.array([550, 0])
     dt = 0.25
 
@@ -73,7 +75,7 @@ def main():
         gray_level = int(gray_level)
         d[p] = (gray_level, gray_level, gray_level)
 
-    slam.draw_square(d, 10.0, curr_pose, (255, 0, 0), width=1)
+    imdraw.draw_square(d, 10.0, curr_pose, (255, 0, 0), width=1)
 
     cv2.imshow('test', d.astype(np.uint8))
 
