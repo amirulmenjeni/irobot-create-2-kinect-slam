@@ -1,4 +1,5 @@
 import serial
+import sys
 import time
 import datetime
 import struct
@@ -42,7 +43,11 @@ PKT_BYTES[PKT_STATUS]   = 10
 
 # Threads
 THREAD_MOTION = 0
-THREAD_SLAM = 1
+THREAD_KINECT = 1
+
+MOTION_STATIC = 0
+MOTION_EXPLORE = 1
+MOTION_FOLLOW = 2
 
 class PIDController:
 
@@ -350,6 +355,7 @@ class Robot:
         self.auto_timestep = 0
         self.auto_end_time = 0
         self.auto_t0 = 0
+        self.motion_state = MOTION_STATIC
 
         self.plotter = StaticPlotter(
             3, # Plot 3 lines for each graph.
@@ -363,13 +369,21 @@ class Robot:
 
         # SLAM related.
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
-        self.vel_ctrl = np.array([0, 0]) # The control u_t
+
         self.particle_filter = slam.ParticleFilter(
-            config.CONTROL_DELTATIME,\
+            config.CONTROL_DELTA_TIME,\
             self.occ_grid_map.shape,\
             config.GRID_MAP_RESOLUTION,\
-            num_particles=100)
-        self.curr_scan = None
+            num_particles=config.PF_NUM_PARTICLES)
+
+        self.fast_slam = slam.FastSLAM(\
+            self.occ_grid_map.shape,
+            config.GRID_MAP_RESOLUTION,
+            config.CONTROL_DELTA_TIME,
+            num_particles=config.PF_NUM_PARTICLES)
+
+        self.u_t = None
+        self.z_t = None
 
         # Initialize all threads.
         self.__init_threads()
@@ -401,8 +415,8 @@ class Robot:
         self.threads = [
                 threading.Thread(target=Robot.thread_motion2, args=(self,),\
                 name='Motion'),\
-                threading.Thread(target=Robot.thread_slam, args=(self,),\
-                name='SLAM'),\
+                threading.Thread(target=Robot.thread_kinect, args=(self,),\
+                name='Kinect'),\
         ]
 
         # A list of flag to maintain thread stop request
@@ -716,65 +730,66 @@ class Robot:
         if not self.threads[i].is_alive():
             self.threads[i].start()
 
-    def thread_slam(self):
+    def thread_kinect(self):
 
         delta_time = 0.25
         SLICE_ROW = 315
         DEPTH_SHAPE_COL = 640
         RESOLUTION = config.GRID_MAP_RESOLUTION
+        MAP_SIZE = self.occ_grid_map.shape
 
         prev_cells = None
-        prev_pose = None
-
-        time.sleep(1.5)
 
         while 1:
 
+            while self.z_t is not None:
+                time.sleep(1e-6)
+
             # Get the x-y-locations of obstacles projected from kinect's depth
             # map.
-            frame_local = self.get_kinect_xy(SLICE_ROW)
-            self.curr_scan = frame_local
+            frame_local, depth_data = slam.get_kinect_xy(SLICE_ROW)
+            self.z_t = frame_local
 
-            # The pose of the robot when the this scan takes place.
-            curr_pose = self.get_pose()
+            # # The pose of the robot when the this scan takes place.
+            # curr_pose = self.get_pose()
 
-            # Transform the 2d coordinates in the robot's local coordinate
-            # system to the global coordinate system.
-            H = rutil.rigid_trans_mat3(curr_pose)
-            frame_global = rutil.transform_pts_2d(H, frame_local)
+            # # Transform the 2d coordinates in the robot's local coordinate
+            # # system to the global coordinate system.
+            # H = rutil.rigid_trans_mat3(curr_pose)
+            # frame_global = rutil.transform_pts_2d(H, frame_local)
  
-            # Convert the real 2d end-points into cell position (row, column)
-            # on the grid map.
-            end_pt_cells = slam.world_frame_to_cell_pos(frame_global,
-                self.occ_grid_map.shape, RESOLUTION)
+            # # Convert the real 2d end-points into cell position (row, column)
+            # # on the grid map.
+            # end_pt_cells = slam.world_frame_to_cell_pos(frame_global,
+            #     MAP_SIZE, RESOLUTION)
 
-            # Get the cells on the occupancy grid map that is observed in the
-            # current scan.
-            pos_cell = slam.world_to_cell_pos(curr_pose[:2],\
-                self.occ_grid_map.shape, RESOLUTION)
-            curr_cells, _ = slam.observed_cells(pos_cell, end_pt_cells)
+            # # Get the cells on the occupancy grid map that is observed in the
+            # # current scan.
+            # pos_cell = slam.world_to_cell_pos(curr_pose[:2], MAP_SIZE,
+            #         RESOLUTION)
+            # obs_dict  = slam.observed_cells(pos_cell, end_pt_cells)
 
-            # Scan-match the current scan frame with the previous scan frame.
-            if prev_cells is not None:
-                end_pt_cells = slam.scan_match(curr_cells, prev_cells,\
-                    end_pt_cells)
+            # obs_mat = slam.observation_matrix(obs_dict, occu=0.9, free=-0.7)
+            # curr_cells = obs_mat[:,:2]
 
-            # Update posterior.
-            slam.occupancy_grid_mapping(self.occ_grid_map,\
-                    np.copy(self.occ_grid_map), curr_pose, end_pt_cells,\
-                    RESOLUTION)
+            # # Scan-match the current scan frame with the previous scan frame.
+            # if prev_cells is not None:
+            #     end_pt_cells = slam.scan_match(curr_cells, prev_cells,\
+            #         end_pt_cells)
 
-            prev_cells = np.copy(curr_cells)
-            prev_pose = np.copy(curr_pose)
+            # # Update posterior.
+            # slam.update_occupancy_grid_map(self.occ_grid_map, obs_mat)
 
-            time.sleep(0.25)
+            # prev_cells = np.copy(curr_cells)
 
-            if self.is_thread_stop_requested[THREAD_SLAM]:
+            # time.sleep(config.MEASURE_DELTA_TIME)
+
+            if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
 
     def thread_motion2(self):
 
-        delta_time = 0.25
+        delta_time = config.CONTROL_DELTA_TIME
         next_waypoint = None
         calc_pos = None
         prev_calc_pos = None
@@ -788,8 +803,6 @@ class Robot:
         pid_a = PIDController(0.0, 0, 0)
 
         self.auto_timestep = self.auto_timestep + delta_time * 5
-
-        print('Thread motion 2 started')
 
         while True:
 
@@ -810,9 +823,11 @@ class Robot:
             read_w = delta_angle / delta_time
 
             self.__delta_distance = delta_distance
-            self.__delta_angle = delta_angle
+            self.__delta_angle = math.radians(delta_angle)
 
-            self.__update_odometry(delta_distance, delta_angle)
+            self.__update_odometry(delta_distance, self.__delta_angle)
+
+            tstart = time.time()
 
             v1, v2 = 0, 0
 
@@ -889,7 +904,7 @@ class Robot:
 
                 pid_x.e(calc_pos[0], curr_pos[0])
                 pid_y.e(calc_pos[1], curr_pos[1])
-                pid_a.e(rutil.disp_to_angle(calc_pos), a, mod=360)
+                pid_a.e(rutil.disp_to_angle(calc_pos), a, mod=math.pi*2)
 
                 out_x = error_vector[0] +\
                     pid_x.P() + pid_x.I(delta_time) + pid_x.D(delta_time)
@@ -908,7 +923,7 @@ class Robot:
 
                 if step_counter % step_mod == 0:
 
-                    self.vel_ctrl = np.array([out_v, out_w])
+                    self.u_t = np.array([out_v, out_w])
 
                     v1, v2 = Robot.__inverse_drive(
                         out_v, out_w, self.__b)
@@ -916,17 +931,22 @@ class Robot:
 
                 timestep += delta_time
 
-                if self.curr_scan is not None:
-                    self.particle_filter.update(self.curr_scan, self.vel_ctrl,\
-                        self.get_pose(), self.occ_grid_map)
-
             else:
-                self.vel_ctrl = np.array([self.issued_v, self.issued_w])
+                self.u_t = np.array([self.issued_v, self.issued_w])
 
                 # Manual driving.
                 v1, v2 = Robot.__inverse_drive(
                     self.issued_v, self.issued_w, self.__b)
                 self.drive_direct(v1, v2)
+
+            if self.z_t is not None and np.sum(self.u_t) != 0:
+
+                tstart = time.time()
+                self.fast_slam.update(self.z_t, self.u_t)
+                print('fastSLAM update time:', time.time() - tstart)
+
+                self.z_t = None
+                self.u_t = None
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -961,10 +981,10 @@ class Robot:
             read_w = delta_angle / delta_time    # Change in orientation (degree)
 
             self.__delta_distance = delta_distance
-            self.__delta_angle = delta_angle
+            self.__delta_angle = math.radians(delta_angle)
 
             # Update the position of the robot.
-            self.__update_odometry(delta_distance, delta_angle)
+            self.__update_odometry(delta_distance, self.__delta_angle)
 
             v1, v2 = 0, 0
 
@@ -1153,33 +1173,12 @@ class Robot:
 
         return (self.__v, self.__w)
 
-    def get_kinect_xy(self, slice_row):
-
-        # 480 x 640 ndarray matrix.
-        depth, _ = freenect.sync_get_depth()
-
-        u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
-
-        # xyz is an Nx3 array representing 3d coordinates of objects
-        # following standard right-handed coordinate system.
-        xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
-
-        # Convert the 3d right-handed coordinate to the robot's 2d local 
-        # coordinate system.
-        x, y, z = xyz.T
-        xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-
-        # Change from m to cm.
-        frame_local = xy * 100.0
-
-        return frame_local
-
     def get_delta_pose(self):
 
         dd = self.__delta_distance
-        da = self.__delta_angle # Degree
-        dx = dd * math.cos(math.radians(da))
-        dy = dd * math.sin(math.radians(da))
+        da = self.__delta_angle
+        dx = dd * math.cos(da)
+        dy = dd * math.sin(da)
         return np.array([dx, dy, da])
 
     def get_pose(self):
@@ -1213,16 +1212,16 @@ class Robot:
     def get_delta_angle(self):
 
         """
-        The change in angle in degrees.
+        The change in angle in radians.
         """
 
         return self.__delta_angle
 
     def get_delta_x(self):
-        return self.issued_v * math.cos(math.radians(self.__delta_angle))
+        return self.issued_v * math.cos(self.__delta_angle)
 
     def get_delta_y(self):
-        return self.issued_v * math.sin(math.radians(self.__delta_angle))
+        return self.issued_v * math.sin(self.__delta_angle)
 
     def enable_pid(self):
         self.is_pid_enable = True
@@ -1241,19 +1240,19 @@ class Robot:
             delta_distance:
                 The distance traveled within a consistent time tick.
             delta_angle:
-                The change in angle within a consistent time tick.
+                The change in angle within a consistent time tick in radians.
         """
 
         # Update orientation.
-        orientation = (self.__pose[2] + delta_angle) % 360
+        orientation = (self.__pose[2] + delta_angle) % (math.pi*2)
 
         # Convert the orientation from degree to radian for the next operations
         # (determining the x- and y-positon).
-        radian = (math.pi / 180.0) * orientation
+        # radian = (math.pi / 180.0) * orientation
 
         # Update x- and y-positon.
-        x = self.__pose[0] + delta_distance * math.cos(radian)
-        y = self.__pose[1] + delta_distance * math.sin(radian)
+        x = self.__pose[0] + delta_distance * math.cos(orientation)
+        y = self.__pose[1] + delta_distance * math.sin(orientation)
 
         self.__pose = np.array([x, y, orientation])
 

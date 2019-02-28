@@ -2,22 +2,17 @@ import math
 import numpy as np
 from scipy import ndimage
 
-def rigid_trans_mat3(pose, grids=False):
+def rigid_trans_mat3(pose):
 
     """
     Returns a rigid homogeneous transformation matrix.
 
     @param pose:
         A size-3 1-D numpy array [x, y, heading]^T where the heading is in
-        degrees.
+        radians.
     """
 
     x, y, r = pose
-    r = math.radians(r)
-
-    if grids:
-        y, x = -x, y
-        r = -r
 
     return np.array([
             [math.cos(r), -math.sin(r), x],
@@ -34,13 +29,21 @@ def transform_pts_2d(H, pts):
         A 3x3 homogenous transformation matrix.
     @param pts:
         An Nx2 numpy array. Each row in the array is a size-2 array representing
-        2-dimensional point.
+        real 2-dimensional point.
     """
 
     assert H.shape[0] == H.shape[1] and H.shape[0] == 3
     assert pts.shape[1] == 2
 
     return np.dot(H[:2,:2], pts.T).T + H[:2,2]
+
+def transform_cells_2d(H, cells, map_size, res):
+
+    mid = np.array(map_size) / 2
+
+    tr = np.array([-H[1,2], H[0,2]]) / res
+
+    return (np.dot(H[:2,:2], (cells - mid).T).T + mid + tr).astype(int)
 
 def transform_map(pose, grid_map):
 
@@ -146,8 +149,13 @@ def angle_between_vectors(vec_a, vec_b):
         np.dot(vec_a, vec_b) / (norm_a * norm_b))
 
 def angle_to_dir(angle):
-    x = math.cos(math.radians(angle))
-    y = math.sin(math.radians(angle))
+
+    """
+    Returns the direction vector from origin for the given angle in radians.
+    """
+
+    x = math.cos(angle)
+    y = math.sin(angle)
     return np.array([x, y])
 
 def disp_to_angle(disp):
@@ -158,7 +166,7 @@ def disp_to_angle(disp):
     if (x <= 0 and y <= 0) or (x >= 0 and y <= 0):
         a = 2 * math.pi - abs(a)
 
-    return math.degrees(a)
+    return a
 
 def log_odds_to_prob(k):
 
@@ -176,4 +184,7 @@ def prob_to_log_odds(p):
     """
 
     return math.log10(p / (1.0 - p))
+
+vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
+vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)
 

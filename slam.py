@@ -6,6 +6,8 @@ import time
 import bisect
 import rutil
 import scipy.stats as st
+import calibkinect
+import freenect
 from icp import icp
 from sklearn.neighbors import NearestNeighbors
 
@@ -46,14 +48,14 @@ class ParticleFilter:
 
         """
         @param z:
-            The 2-d real coordinates points projected by the depth map in the
+            The 2-d real coordinates points projected from the depth map in the
             local reference frame.
         @param u:
             The control command for the current time step. This is a size-2
             array with values [linear_velocity, and rotational_velocity].
         @param x:
             The current state (pose) of the robot. This is a size-3 array with
-            values [pos_x, pos_y, heading_degree]
+            values [pos_x, pos_y, heading_radian]
         @param m:
             The occupancy grid map, a 2-D numpy array.
         @param occ_thres:
@@ -61,6 +63,8 @@ class ParticleFilter:
         """
 
         X = []
+
+        z = z[::20]
 
         # observed_cells() use bresenham-line algorithm which is computationally
         # expensive large number of particles. Instead we can compute the local
@@ -81,8 +85,8 @@ class ParticleFilter:
                 u_noise = (1e-3, 1e-3, 3e-6, 3e-6, 3e-4, 3e-4)
                 x = sample_motion_model_velocity(u, p.x, self.deltatime,\
                         u_noise)
-                w = correlation_measurement_model(obsr_mat, p.x, m,
-                        self.resolution)
+                w = likelihood_field_measurement_model(z, p.x, obs_cells,
+                        m.shape, self.resolution)
             else:
                 w = 0
 
@@ -90,8 +94,12 @@ class ParticleFilter:
 
             X.append(p_)
 
+        # Effective sample size.
+        ess = len(self.particles) /(1 + ParticleFilter.cv(self.particles))
+
         # Resampling.
-        self.particles = ParticleFilter.low_variance_sampler(X)
+        if ess < 0.5*len(self.particles):
+            self.particles = ParticleFilter.low_variance_sampler(X)
 
     def low_variance_sampler(particles):
 
@@ -99,27 +107,83 @@ class ParticleFilter:
         Algorithm for reducing sampling error.
         """
 
-        X_ = []
-        n = len(particles)
-        r = np.random.uniform(0, 1 / n)
+        X = []
+        M = len(particles)
+        r = np.random.uniform(0, 1 / M)
         c = particles[0].w
 
         i = 0
-        for m in range(n):
-            u = r + m / n
+        for m in range(M):
+
+            u = r + m / M
             while u > c:
                 i = i + 1
                 c = c + particles[i].w
-            X_.append(particles[i])
 
-        return X_
+            new_x = np.copy(particles[i].x)
+            new_w = 1 / M
+
+            if particles[i].m is not None:
+                new_m = np.copy(particles[i].m)
+            else:
+                new_m = None
+
+            X.append(Particle(new_x, new_w, new_m))
+
+        return X
+
+    def select_with_replacement_resampler(particles):
+
+        X = []
+        M = len(particles)
+
+        # Calculate the cumulative weights of the particles.
+        q = np.cumsum([p.w for p in particles])
+
+        # Generate a sorted array of random numbers between 0.0 to 1.0.
+        r = np.sort(np.random.uniform(0, 1, size=(M + 1)))
+        r[M] = 1.0
+
+        i = j = 0
+        index = {}
+        while (i < M):
+            if (r[i] < q[j]):
+                index[i] = j
+                i = i + 1
+            else:
+                j = j + 1
+
+        for i in range(M):
+
+            new_x = np.copy(particles[index[i]].x)
+            new_w = 1 / M
+
+            if particles[i].m is not None:
+                new_m = np.copy(particles[i].m)
+            else:
+                new_m = None
+        
+            X.append(Particle(new_x, new_w, new_m))
+
+        return X
+
+    def cv(particles):
+
+        """
+        Returns the coefficient of variation of the particles.
+        """
+
+        M = len(particles)
+
+        return sum([(M*p.w - 1)**2 for p in particles]) / M
 
 class Particle:
 
-    def __init__(self, state, weight):
+    def __init__(self, state, weight, grid_map=None):
 
         self.x = state
         self.w = weight
+        self.m = grid_map
 
     def create_random(range_x, range_y, range_h, weight):
 
@@ -128,6 +192,74 @@ class Particle:
         h = np.random.uniform(range_h[0], range_h[1])
 
         return Particle(np.array([x, y, h]), weight)
+
+class FastSLAM:
+
+    def __init__(self, map_size, resolution, dt, num_particles=150):
+
+        self.MAP_SIZE = np.array(map_size)
+        self.RESOLUTION = resolution
+        self.M = num_particles
+        self.DELTA_TIME = dt
+        self.best_particle = 0
+
+        x = np.array([0, 0, 0])
+        w = 1 / num_particles
+        m = np.full(map_size, 0.5)
+
+        self.particles = [Particle(x, w, m) for _ in range(self.M)]
+
+    def update(self, z_t, u_t):
+
+        end_cells = world_frame_to_cell_pos(z_t, self.MAP_SIZE, self.RESOLUTION)
+        mid = np.array(self.MAP_SIZE // 2).astype(int)
+        obs_dict = observed_cells(mid, end_cells)
+
+        # An Nx3 matrix where each row is [row, col, val], and where val is the
+        # update to the belief on cell (row, col) on the occupancy grid map.
+        obs_mat = observation_matrix(obs_dict, occu=0.9, free=-0.7)
+
+        max_weight = -1
+        max_particle_index = 0
+
+        for i, p in enumerate(self.particles):
+
+            z_mat = np.copy(obs_mat)
+            z_cells = z_mat[:,:2]
+
+            # State transition of each particle.
+            x_prev = np.copy(p.x)
+            noise = (1e-2, 1e-8, 1e-8, 1e-2, 1e-10, 1e-10)
+            p.x = sample_motion_model_velocity(u_t, p.x, self.DELTA_TIME,
+                    noise=noise)
+            # print('x_t-1, u_t, x_t:', x_prev, u_t, p.x)
+
+            H = rutil.rigid_trans_mat3(p.x)
+            z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
+                    self.RESOLUTION)
+
+            # Compute the weight of this particle.
+            p.w = likelihood_field_measurement_model(z_cells, p.x,\
+                    np.argwhere(p.m > 0.75), self.MAP_SIZE, self.RESOLUTION)
+
+            if p.w > max_weight:
+                max_weight = p.w
+                max_particle_index = i
+
+            z_mat[:,:2] = z_cells
+
+            # Update the map of each particle.
+            update_occupancy_grid_map(p.m, z_mat)
+
+        self.best_particle = max_particle_index
+
+        # Effective sample size.
+        ess = self.M / (1 + ParticleFilter.cv(self.particles))
+
+        self.particles = ParticleFilter.low_variance_sampler(self.particles)
+
+    def highest_particle(self):
+        return self.particles[self.best_particle]
 
 def cell_to_world_pos(cell, map_size, resolution, center=False):
 
@@ -201,8 +333,7 @@ def world_frame_to_cell_pos(frame, map_size, resolution):
 def observed_cells(pos, end_pt_cells):
 
     """
-    Returns an Nx2 numpy array whose rows are the 2-D grid map coordinates of
-    all cells observed in the current scan, a size-N dictionary whose keys are
+    Returns size-N dictionary whose keys are
     the 2-D grid map coordinate each with either value 1 or 0 indicating
     occupied or free cell.
 
@@ -219,9 +350,9 @@ def observed_cells(pos, end_pt_cells):
     for x0, y0 in end_pt_cells:
         beam_line(cells, (x1, y1), (x0, y0))
 
-    return np.array(list(cells.keys())), cells
+    return cells
 
-def observation_matrix(cell_dict):
+def observation_matrix(cell_dict, occu=1, free=0):
 
     """
     Returns an Nx3 numpy array where each row [row, col, v] represents the row,
@@ -232,11 +363,14 @@ def observation_matrix(cell_dict):
         and v is the occupancy value on that cell.
     """
 
-    a = np.zeros((len(cell_dict), 3), dtype=int)
+    a = np.zeros((len(cell_dict), 3), dtype=float)
     for i, d in enumerate(cell_dict.items()):
         row, col = d[0]
-        val = d[1]
-        a[i] = [row, col, val]
+        if d[1]:
+            val = occu
+        else:
+            val = free
+        a[i] = [int(row), int(col), val]
     return a
 
 def observation_map(cell_dict, map_size):
@@ -368,8 +502,7 @@ def beam_line(cells,  p0, p1):
         else:
             __line_high(cells, p0, p1)
 
-def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
-    resolution):
+def occupancy_grid_mapping(posterior, prev_posterior, obs_dict):
 
     """
     Calculates the posterior distribution m over the map given the observation
@@ -402,19 +535,19 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
     # Bresenham's line algorithm to get the set of cells C_i that intersects
     # with a straight line formed between the robot and the given obstacle b_i
     # position.  Take the union C = C_0 U C_1 U ... U C_N.
-    cells = {}
-    x1, y1 = world_to_cell_pos(pose[:2], map_size, resolution)
-    for x0, y0 in scan_data:
-        beam_line(cells, (x1, y1), (x0, y0))
+    # cells = {}
+    # x1, y1 = world_to_cell_pos(pose[:2], map_size, resolution)
+    # for x0, y0 in scan_data:
+    #     beam_line(cells, (x1, y1), (x0, y0))
 
     # Perform log odds update on the posterior map distribution.
-    for p in cells.keys():
+    for p in obs_dict.keys():
 
         if is_out_of_bound(p, map_size):
             continue
 
         # p was observed as an obstacle.
-        if cells[p]:
+        if obs_dict[p]:
             logit = rutil.prob_to_log_odds(prev_posterior[p]) + OCCU
             posterior[p] = rutil.log_odds_to_prob(logit)
 
@@ -422,6 +555,34 @@ def occupancy_grid_mapping(posterior, prev_posterior, pose, scan_data,
         else:
             logit = rutil.prob_to_log_odds(prev_posterior[p]) + FREE
             posterior[p] = rutil.log_odds_to_prob(logit)
+
+def update_occupancy_grid_map(m, obs_mat):
+
+    rows, cols = obs_mat[:,0].astype(int), obs_mat[:,1].astype(int)
+
+    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
+    m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+
+def local_occupancy(cell_dict, out, map_size, resolution):
+
+    OCCU = 0.9
+    FREE = -0.7
+
+    for p in cell_dict.keys():
+        
+        if is_out_of_bound(p, map_size):
+            continue
+
+        if p not in out:
+            out[p] = 0.5
+
+        if cell_dict[p]:
+            logit = rutil.prob_to_log_odds(out[p]) + OCCU
+            out[p] = rutil.log_odds_to_prob(logit)
+
+        else:
+            logit = rutil.prob_to_log_odds(out[p]) + FREE
+            out[p] = rutil.log_odds_to_prob(logit)
 
 def scan_match(src_pts, dst_pts, pts):
 
@@ -468,9 +629,6 @@ def motion_model_velocity(succ_pose, curr_pose, control, dt,
     x1, y1, h1 = succ_pose 
     x0, y0, h0 = curr_pose 
 
-    h1 = math.radians(h1)
-    h0 = math.radians(h0)
-
     dx = x0 - x1
     dy = y0 - y1
 
@@ -503,7 +661,7 @@ def motion_model_velocity(succ_pose, curr_pose, control, dt,
     return p1*p2*p3
 
 def sample_motion_model_velocity(control, curr_pose, dt,
-    noise=(1, 1, 1, 1, 1, 1)):
+    noise=(1e-10, 1e-10, 1e-10, 1e-10, 1e-10, 1e-10)):
 
     """
     Sample x_t from the probability p(x_t | u_t, x_{t-1}). This can be used to
@@ -528,7 +686,6 @@ def sample_motion_model_velocity(control, curr_pose, dt,
     a1, a2, a3, a4, a5, a6 = noise
 
     x, y, h = curr_pose
-    h = math.radians(h)
 
     v, w = control
 
@@ -545,10 +702,58 @@ def sample_motion_model_velocity(control, curr_pose, dt,
     y1 = y + r_*math.cos(h) - r_*math.cos(h + w_*dt)
     h1 = h + w_*dt + gamma*dt
 
-    return np.array([x1, y1, np.degrees(h1)])
+    return np.array([x1, y1, h1])
 
-def likelihood_field_measurement_model(z, x, gmap, occ_cells, res,
-        mean=6.3, sd=2.31458)
+# def sample_motion_model_odometry(u_t, prev_x,\
+#     noise=(1e-10, 1e-10, 1e-10, 1e-10)):
+
+#     assrt len(noise) == 4
+
+#     a1, a2, a3, a4 = noise
+
+#     odom_pose1, odom_pose2 = u_t[0], u_t[1]
+
+#     x1, y1, h1 = odom_pose1
+#     x2, y2, h2 = odom_pose2
+
+#     d_rot1 = math.atan2(y2 - y1, x2 - x1)
+#     d_trans = math.sqrt((x2 - x1)**2, (y2 - y1)**2)
+#     d_rot2 = h2 - h1 - d_rot1
+
+#     d_rot1_sq = d_rot1**2
+#     d_trans_sq = d_trans**2
+#     d_rot2_sq = d_rot2**2
+
+#     d_rot1_ = d_rot1 - sample_normal_distribution(a1*d_rot1_sq + a2*d_trans_sq)
+#     d_trans_ = d_trans - sample_normal_distribution(\
+#         a3*d_trans_sq + a4*d_rot1_sq + a4*d_rot2_sq)
+#     d_rot2_ = d_rot2 - sample_normal_distribution(a1*d_rot2_sq + a2*d_trans_sq)
+
+#     return
+
+def sample_motion_model_odometry(u_t, prev_x,\
+    noise=(1e-10, 1e-10, 1e-10, 1e-10)):
+
+    assert len(noise) == 4
+
+    a1, a2, a3, a4 = noise
+
+    d_dist, d_rad = u_t
+
+    d_dist_sq = d_dist**2
+    d_rad_sq = d_rad**2
+
+    d_dist_ = d_dist - sample_normal_distribution(a1*d_rad_sq + a2*d_dist_sq)
+    d_rad_ = d_rad - sample_normal_distribution(a3*d_dist_sq + a4*d_rad_sq)
+
+    x, y, h = prev_x
+    x = x + d_dist_ * math.cos(h + d_rad_)
+    y = y + d_dist_ * math.sin(h + d_rad_)
+    h = h + d_rad_
+
+    return np.array([x, y, h])
+
+def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
     """
     Compute the probability p(z_t, | x_t, m).
@@ -559,39 +764,25 @@ def likelihood_field_measurement_model(z, x, gmap, occ_cells, res,
         The state or pose of the particle.
     @param occ_cells:
         An Mx2 array for M obstacle cells in the occupancy grid map.
-    @param mean:
-        The expected (mean value) of the mean distance between obstacle points
-        from scan data and the obstacle points on the map.
-    @param sd:
-        The standard deviation of the distances d_i where d_i is the nearest
-        distance of each observed obstacle points p_i to the nearest obstacle
-        points P_i on the map when the mean value is mean (param).
     """
 
     if len(occ_cells) == 0:
         return 0
 
-    # Transform z to be in the global reference frame.
     H = rutil.rigid_trans_mat3(x)
-    z = rutil.transform_pts_2d(H, z)
+    end_cells = rutil.transform_cells_2d(H, end_cells, map_size, res)
 
-    occ_pts = cell_to_world_pos(occ_cells, gmap.shape, res, center=True)
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(end_cells)
 
-    nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(occ_pts)
+    dist, inds = nbrs.kneighbors(occ_cells)
 
-    dist, inds = nbrs.kneighbors(z)
+    ave_min_dist = 0
+    for d in dist[0]:
+        ave_min_dist += d
 
-    m = np.mean(dist)
+    return np.exp(-ave_min_dist / len(dist))
 
-    Z = (m - mean) / sd
-
-    # Find the probability that random variable m is within 
-    # +/- one standard deviation away from the zero-centered mean.
-    prob = st.norm(0, 1).cdf(Z + sd) - st.norm(0, 1).cdf(Z - sd)
-
-    return prob
-
-def correlation_measurement_model(obsr_mat, pose, grid_map, resolution):
+def correlation_measurement_model(obsr_mat, grid_map, resolution):
 
     """
     Compute the probability p(z_t | x_t, m) i.e., the probability that the
@@ -605,24 +796,21 @@ def correlation_measurement_model(obsr_mat, pose, grid_map, resolution):
          See also https://en.wikipedia.org/wiki/Pearson_correlation_coefficient
     """
 
-    z = cell_to_world_pos(obsr_mat[:,:2], grid_map.shape, resolution)
-    H = rutil.rigid_trans_mat3(pose)
-    z = rutil.transform_pts_2d(H, z)
-
     n = obsr_mat.shape[0]
 
     glob_mat = np.zeros((n, 3))
     for i, k in enumerate(obsr_mat):
         row, col, val = k
+        row, col = int(row), int(col)
         glob_mat[i] = [row, col, grid_map[row, col]]
 
     m = np.sum(obsr_mat[:,2] + glob_mat[:,2]) / (2*n)
     a = np.sum((glob_mat[:,2] - m) * (obsr_mat[:,2] - m))
     b = np.sum((glob_mat[:,2] - m)**2)
     c = np.sum((obsr_mat[:,2] - m)**2)
-    ppc = a / (math.sqrt(b*c))
+    pcc = a / (math.sqrt(b*c))
 
-    return max(0, ppc)
+    return max(0, pcc)
 
 def correlation_measurement_model2(obs_map, pose, grid_map, mask, resolution):
 
@@ -667,7 +855,12 @@ def sample_normal_distribution(b_sq):
 
 def prob_normal_distribution(a, b_sq):
 
-    return (1 / math.sqrt(2*math.pi*b_sq)) * math.exp(-0.5*(a**2) / b_sq)
+    """
+    Finds the probability of argument a under a zero-centered distribution with
+    variance b_sq.
+    """
+
+    return math.exp(-(a**2) /  (2*b_sq)) / math.sqrt(2*math.pi*b_sq)
 
 def posterior_prob_dist(posterior):
 
@@ -693,3 +886,26 @@ def d3_map(posterior, invert=False):
         d = 255 - d
 
     return d
+
+def get_kinect_xy(slice_row):
+
+    # 480 x 640 ndarray matrix.
+    depth, _ = freenect.sync_get_depth()
+
+    u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
+
+    # xyz is an Nx3 array representing 3d coordinates of objects
+    # following standard right-handed coordinate system.
+    xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
+
+    # Convert the 3d right-handed coordinate to the robot's 2d local 
+    # coordinate system.
+    x, y, z = xyz.T
+    xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+
+    # Change from m to cm.
+    frame_local = xy * 100.0
+    depth_data = depth[v, u].flatten()
+    depth_data = depth_data[depth_data < 2047] * 0.1
+
+    return frame_local, depth_data
