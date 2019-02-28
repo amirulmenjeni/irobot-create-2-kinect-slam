@@ -8,6 +8,9 @@ import rutil
 import scipy.stats as st
 import calibkinect
 import freenect
+import random
+import heapq
+from data_structures import Node
 from icp import icp
 from sklearn.neighbors import NearestNeighbors
 
@@ -195,7 +198,7 @@ class Particle:
 
 class FastSLAM:
 
-    def __init__(self, map_size, resolution, dt, num_particles=150):
+    def __init__(self, map_size, resolution, dt, init_map, num_particles=150):
 
         self.MAP_SIZE = np.array(map_size)
         self.RESOLUTION = resolution
@@ -203,11 +206,14 @@ class FastSLAM:
         self.DELTA_TIME = dt
         self.best_particle = 0
 
+        self.is_map_initialized = False
+        self.init_map_count = 0
+
         x = np.array([0, 0, 0])
         w = 1 / num_particles
-        m = np.full(map_size, 0.5)
 
-        self.particles = [Particle(x, w, m) for _ in range(self.M)]
+        self.particles =\
+                [Particle(x, w, np.copy(init_map)) for _ in range(self.M)]
 
     def update(self, z_t, u_t):
 
@@ -229,9 +235,9 @@ class FastSLAM:
 
             # State transition of each particle.
             x_prev = np.copy(p.x)
-            noise = (1e-2, 1e-8, 1e-8, 1e-2, 1e-10, 1e-10)
-            p.x = sample_motion_model_velocity(u_t, p.x, self.DELTA_TIME,
-                    noise=noise)
+            # noise = (1e-2, 1e-8, 1e-8, 1e-2, 1e-10, 1e-10)
+            noise = (1e-3, 1e-3, 1e-3, 1e-3)
+            p.x = sample_motion_model_odometry(u_t, p.x, noise=noise)
             # print('x_t-1, u_t, x_t:', x_prev, u_t, p.x)
 
             H = rutil.rigid_trans_mat3(p.x)
@@ -256,7 +262,8 @@ class FastSLAM:
         # Effective sample size.
         ess = self.M / (1 + ParticleFilter.cv(self.particles))
 
-        self.particles = ParticleFilter.low_variance_sampler(self.particles)
+        if ess < 0.5 * self.M:
+            self.particles = ParticleFilter.low_variance_sampler(self.particles)
 
     def highest_particle(self):
         return self.particles[self.best_particle]
@@ -909,3 +916,113 @@ def get_kinect_xy(slice_row):
     depth_data = depth_data[depth_data < 2047] * 0.1
 
     return frame_local, depth_data
+
+def random_explore_cell(pose, grid_map, free_thres, min_radius, max_radius, res):
+
+    robot_cell = world_to_cell_pos(pose[:2], grid_map.shape, res)
+    free_cells = np.argwhere(grid_map < free_thres)
+
+    # Manhattan distance.
+    distance = np.sum(np.abs(free_cells - np.array(robot_cell)), axis=1)
+
+    lower_bound = min_radius <= distance
+    upper_bound = distance <= max_radius
+
+    free_cells = free_cells[np.logical_and(lower_bound, upper_bound)]
+
+    return random.choice(free_cells)
+
+def neighbor_cells(cell, grid_map, free_thres):
+
+    row, col = cell
+    for i in range(-1, 2):
+        for j in range(-1, 2):
+
+            if i == 0 and j == 0:
+                continue
+
+            neighbor = (row + i, col + j)
+
+            if not is_out_of_bound(neighbor, grid_map.shape) and\
+               grid_map[row + i, col + j] < free_thres:
+                yield neighbor
+
+def __heapsort(iterable):
+    
+    h = []
+    for v in iterable:
+        heapq.heappush(h, v)
+    return [heapq.heappop(h) for _ in range(len(h))]
+
+def __replace_greater(queue, node):
+
+    for i in range(len(queue)):
+        if queue[i].label == node.label and queue[i].f_cost() > node.f_cost():
+            queue[i] = node
+
+    return __heapsort(queue)
+
+def shortest_path(start, goal, grid_map, free_thres):
+
+    """
+    A* algorithm to find shortest-path from the starting cell to the goal cell
+    on the given grid map.
+    """
+
+    goal = tuple(goal)
+
+    print('start:', start, 'goal:', goal)
+
+    STEP_COST = 1
+
+    # Heuristic function: use manhattan distance between cells a and b.
+    h = lambda n : np.sum(np.abs(np.array(n.label) - np.array(goal)))
+    
+    # Path-cost function.
+    g = lambda n : n.parent.g_cost + STEP_COST
+
+    explored_set = {}
+    frontier_set = {}
+
+    node = Node(start)
+    node.g_cost = 0
+    node.h_cost = h(node)
+    frontiers = []
+    heapq.heappush(frontiers, node)
+    frontier_set[node.label] = True
+
+    solution = []
+
+    while 1:
+
+        if len(frontiers) == 0:
+            return []
+
+        node = heapq.heappop(frontiers)
+        if node.label in frontier_set:
+            del frontier_set[node.label]
+
+        # Goal-test.
+        if node.label == goal:
+            while node.parent is not None:
+                solution.append(node.label)
+                node = node.parent
+            return solution[::-1]
+
+        explored_set[node.label] = True
+
+        for neighbor in neighbor_cells(node.label, grid_map, free_thres):
+
+            child_node = Node(neighbor)
+            child_node.parent = node
+            child_node.g_cost = g(child_node)
+            child_node.h_cost = h(child_node)
+
+            if neighbor not in explored_set and\
+               neighbor not in frontier_set:
+
+                heapq.heappush(frontiers, child_node)
+                frontier_set[neighbor] = True
+
+            elif neighbor in frontier_set:
+                frontiers = __replace_greater(frontiers, child_node)

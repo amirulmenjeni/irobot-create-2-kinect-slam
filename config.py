@@ -1,5 +1,5 @@
 # The resolution of the occupancy grid map in unit per pixel.
-GRID_MAP_RESOLUTION = 15.0
+GRID_MAP_RESOLUTION = 10.0
 GRID_MAP_SIZE = (300, 300)
 
 # PID values.

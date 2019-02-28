@@ -25,6 +25,7 @@ SAFE_MODE    = chr(131)
 FULL_MODE    = chr(132)
 SENSORS      = chr(142)
 DRIVE_DIRECT = chr(145)
+DRIVE        = chr(137)
 
 # Packets
 PKT_MOTION   = chr(2)  # Group Packet 2, includes Packets 17 to 20.
@@ -328,6 +329,8 @@ class Robot:
         self.__port = port
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
 
+        self.start()
+
         # Store issued command variables.
         self.issued_v = 0
         self.issued_w = 0
@@ -367,25 +370,43 @@ class Robot:
 
         self.__is_timestep_end = False
 
+        ###################################################
         # SLAM related.
+        ###################################################
+
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
-        self.particle_filter = slam.ParticleFilter(
-            config.CONTROL_DELTA_TIME,\
-            self.occ_grid_map.shape,\
-            config.GRID_MAP_RESOLUTION,\
-            num_particles=config.PF_NUM_PARTICLES)
+        # Initialize the map for fastSLAM.
+        print('Initializing fastSLAM map...')
+        for _ in range(30):
+
+            frame_local, depth_data = slam.get_kinect_xy(315)
+            local_map = np.full(config.GRID_MAP_SIZE, 0.5)
+
+            end_cells = slam.world_frame_to_cell_pos(frame_local,\
+                config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+            mid = np.array(np.array(config.GRID_MAP_SIZE) // 2).astype(int)
+            obs_dict = slam.observed_cells(mid, end_cells)
+            obs_mat = slam.observation_matrix(obs_dict, occu=0.9, free=-0.7)
+
+            slam.update_occupancy_grid_map(local_map, obs_mat)
+
+            time.sleep(0.01)
 
         self.fast_slam = slam.FastSLAM(\
             self.occ_grid_map.shape,
             config.GRID_MAP_RESOLUTION,
             config.CONTROL_DELTA_TIME,
+            np.copy(local_map),
             num_particles=config.PF_NUM_PARTICLES)
+        print('Done.')
 
         self.u_t = None
         self.z_t = None
 
+        ###################################################
         # Initialize all threads.
+        ###################################################
         self.__init_threads()
 
     def ports_lookup(self):
@@ -413,7 +434,7 @@ class Robot:
         """
 
         self.threads = [
-                threading.Thread(target=Robot.thread_motion2, args=(self,),\
+                threading.Thread(target=Robot.thread_motion3, args=(self,),\
                 name='Motion'),\
                 threading.Thread(target=Robot.thread_kinect, args=(self,),\
                 name='Kinect'),\
@@ -618,6 +639,32 @@ class Robot:
 
         self.send_codes(codes)
 
+    def drive_radius(self, v, r):
+
+        """
+        Drive the robot using control the following control values:
+            
+            v for the forward velocity.
+            r for the radius of turn.
+        """
+
+        max_speed = rutil.cm_to_mm(self.max_speed)
+
+        v = rutil.cm_to_mm(v)
+        r = rutil.cm_to_mm(r)
+
+        v = rutil.cap(v, -max_speed, +max_speed)
+
+        v_high, v_low = rutil.to_twos_comp_2(int(v))
+        r_high, r_low = rutil.to_twos_comp_2(int(r))
+
+        codes = [START, FULL_MODE,
+                 DRIVE,
+                 chr(v_high), chr(v_low),
+                 chr(r_high), chr(r_low)]
+
+        self.send_codes(codes)
+
     def drive(self, vel_forward, vel_angular, is_feedback=False):
 
         """
@@ -787,6 +834,130 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
 
+    def thread_motion3(self):
+
+        self.is_autonomous = True
+
+        time.sleep(1)
+
+        MAP_SIZE = config.GRID_MAP_SIZE
+        RESOLUTION = config.GRID_MAP_RESOLUTION
+
+        delta_time = config.CONTROL_DELTA_TIME
+        self.motion_state = MOTION_EXPLORE
+
+        random_cell = None
+        next_pos = None
+        follow_path = []
+        follow_index = 0
+
+        while True:
+
+            tstart = time.time()
+            
+            #
+            # Read odometry sensor. 
+            #
+            delta_distance, delta_angle = 0, 0
+            self.get_sensor(PKT_MOTION)
+
+            ## Update fastSLAM particles when u_t is not static and when we have
+            ## observation z_t.
+            ##
+            if self.z_t is not None and self.u_t is not None and\
+                np.sum(self.u_t) != 0:
+                self.fast_slam.update(self.z_t, self.u_t)
+                self.z_t = None
+                self.u_t = None
+
+            #
+            # Obtain the grid map from the best particle in fastSLAM.
+            #
+            grid_map = self.fast_slam.highest_particle().m
+
+            if self.motion_state == MOTION_EXPLORE:
+
+                # 1. We can explore once we have the local map.
+                # 2. Pick a random free cell in the direction of the robot's
+                #    heading.
+                # 3. Find shortest-path to the randomly picked free cell.
+                # 4. Change state to MOTION_FOLLOW
+
+                try:
+                    
+                    rand_cell = slam.random_explore_cell(self.get_pose(),
+                            grid_map, 0.35, 3, 5, RESOLUTION)
+                    self.random_cell = rand_cell
+
+                    robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
+                        MAP_SIZE, RESOLUTION)
+
+                    print('solution from {0} to {1}:'.format(robot_cell,
+                        rand_cell))
+
+                    follow_path = slam.shortest_path(robot_cell, rand_cell,
+                            grid_map, 0.35)
+
+                    self.motion_state = MOTION_FOLLOW
+
+                except IndexError:
+                    # Happens when there is no map or no free cell (rare).
+                    pass
+
+            elif self.motion_state == MOTION_FOLLOW:
+
+                if next_pos is not None:
+                    if rutil.is_in_circle(next_pos, 5, self.get_pose()[:2]):
+                        follow_index = follow_index + 1
+
+                if len(follow_path) == 0:
+                    self.motion_state = MOTION_EXPLORE
+                    continue
+
+                if follow_index >= len(follow_path):
+                    self.motion_state = MOTION_EXPLORE
+                    self.drive_direct(0, 0)
+                    follow_path = []
+                    follow_index = 0
+                    continue
+
+                next_cell = follow_path[follow_index]
+                next_pos = slam.cell_to_world_pos(next_cell, MAP_SIZE,
+                        RESOLUTION, center=False)
+                next_pos = np.array(next_pos)
+
+                print('next_cell:', next_cell, next_pos)
+
+                radius = Robot.inverse_kinematic(self.get_pose(), next_pos)
+
+                self.drive_radius(5, radius)
+
+            elif self.motion_state == MOTION_STATIC:
+                pass
+
+            time.sleep(max(delta_time, time.time() - tstart))
+
+            #
+            # Odometry measurement.
+            #
+            try:
+                delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+            except TypeError:
+                pass
+
+            self.__delta_distance = delta_distance
+            self.__delta_angle = math.radians(delta_angle)
+
+            self.u_t = [delta_distance, self.__delta_angle]
+
+            self.__update_odometry(delta_distance, self.__delta_angle)
+
+            #
+            if self.is_thread_stop_requested[THREAD_MOTION]:
+                break
+
+        self.is_autonomous = False
+
     def thread_motion2(self):
 
         delta_time = config.CONTROL_DELTA_TIME
@@ -809,11 +980,14 @@ class Robot:
             self.__prev_pose = np.copy(self.__pose)
 
             delta_distance, delta_angle = 0, 0
+
             try:
                 self.get_sensor(PKT_MOTION)
             except:
                 pass
+
             time.sleep(delta_time)
+            
             try:
                 delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
             except:
@@ -826,8 +1000,6 @@ class Robot:
             self.__delta_angle = math.radians(delta_angle)
 
             self.__update_odometry(delta_distance, self.__delta_angle)
-
-            tstart = time.time()
 
             v1, v2 = 0, 0
 
@@ -939,14 +1111,14 @@ class Robot:
                     self.issued_v, self.issued_w, self.__b)
                 self.drive_direct(v1, v2)
 
-            if self.z_t is not None and np.sum(self.u_t) != 0:
+            # if self.z_t is not None and np.sum(self.u_t) != 0:
 
-                tstart = time.time()
-                self.fast_slam.update(self.z_t, self.u_t)
-                print('fastSLAM update time:', time.time() - tstart)
+            #     tstart = time.time()
+            #     self.fast_slam.update(self.z_t, self.u_t)
+            #     print('fastSLAM update time:', time.time() - tstart)
 
-                self.z_t = None
-                self.u_t = None
+            #     self.z_t = None
+            #     self.u_t = None
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -1259,6 +1431,53 @@ class Robot:
     def __inverse_drive(v, w, b):
 
         return v - b * w, v + b * w
+
+    def inverse_kinematic(curr_pose, next_pos):
+
+        x0, y0, h0 = curr_pose
+        x1, y1 = next_pos
+
+        direction = next_pos - curr_pose[:2]
+        distance = np.linalg.norm(direction)
+        direction_vector = direction / distance
+        heading_vector = rutil.angle_to_dir(curr_pose[2])
+
+        print('direction:', direction)
+        print('direction_vector:', direction_vector)
+        print('heading_vector:', heading_vector)
+
+        h_err = rutil.angle_between_vectors(direction_vector,
+                heading_vector)
+
+        print('h_err:', h_err, np.degrees(h_err))
+
+        # Calculate the angular direction.
+        cross_prod = np.cross(heading_vector, direction_vector)
+        angle_dir = 0
+        if cross_prod > 0:
+            angle_dir = 1 # Counterclockwise.
+        elif cross_prod < 0:
+            angle_dir = -1 # Clockwise.
+
+        # Case when it's quite possible to drive forward and turn.
+        if -math.pi/4 < h_err < +math.pi/4:
+
+            if angle_dir != 0:
+                h_err *= angle_dir
+                radius = distance *\
+                        math.sin(math.pi/2 - h_err) / math.sin(2*h_err)
+                return radius
+            else:
+                return 32768 # Special case: straight line.
+
+        # Case when we need to turn in place.
+        else:
+            if angle_dir > 0:
+                return 1
+            else:
+                return 65535
+
+        return 0
 
     def __forward_drive(v1, v2, b):
 
