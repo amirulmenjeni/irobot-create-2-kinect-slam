@@ -185,6 +185,19 @@ def prob_to_log_odds(p):
 
     return math.log10(p / (1.0 - p))
 
+def manhattan_distance(a, b):
+
+    x0, y0 = a
+    x1, y1 = b
+
+    return abs(x0 - x1) + abs(x1 - y1)
+
+def euclidean_distance(a, b):
+
+    x0, y0 = a
+    x1, y1 = b
+
+    return math.sqrt((x0 - x1)**2 + (y0 - y1)**2)
+
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
 vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)
-

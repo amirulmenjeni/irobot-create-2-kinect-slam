@@ -30,6 +30,7 @@ DRIVE        = chr(137)
 # Packets
 PKT_MOTION   = chr(2)  # Group Packet 2, includes Packets 17 to 20.
 PKT_STATUS   = chr(3)  # Group Packet 3, includes Packets 21 to 26.
+PKT_BUMP     = chr(7)
 PKT_DISTANCE = chr(19)
 PKT_ANGLE    = chr(20)
 PKT_BATT_CHG = chr(25)
@@ -38,9 +39,10 @@ PKT_BATT_CAP = chr(26)
 # Packet bytes
 PKT_BYTES = { }
 PKT_BYTES[PKT_MOTION]   = 6
+PKT_BYTES[PKT_STATUS]   = 10
+PKT_BYTES[PKT_BUMP]     = 1
 PKT_BYTES[PKT_DISTANCE] = 2
 PKT_BYTES[PKT_ANGLE]    = 2
-PKT_BYTES[PKT_STATUS]   = 10
 
 # Threads
 THREAD_MOTION = 0
@@ -49,6 +51,12 @@ THREAD_KINECT = 1
 MOTION_STATIC = 0
 MOTION_EXPLORE = 1
 MOTION_FOLLOW = 2
+MOTION_ESCAPE = 3
+
+# Special radius values for DRIVE command.
+DRIVE_RADIUS_STRAIGHT = 32768
+DRIVE_RADIUS_COUNTER_CLOCKWISE = 1
+DRIVE_RADIUS_CLOCKWISE = 65535
 
 class PIDController:
 
@@ -380,7 +388,7 @@ class Robot:
         print('Initializing fastSLAM map...')
         for _ in range(30):
 
-            frame_local, depth_data = slam.get_kinect_xy(315)
+            frame_local = slam.get_kinect_xy(315)
             local_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
             end_cells = slam.world_frame_to_cell_pos(frame_local,\
@@ -403,6 +411,7 @@ class Robot:
 
         self.u_t = None
         self.z_t = None
+        self.goal_cell = None
 
         ###################################################
         # Initialize all threads.
@@ -570,6 +579,15 @@ class Robot:
 
                 return charge, capacity
 
+            if packet_id == PKT_BUMP:
+
+                left_bump = struct.unpack('>I',
+                        b'\x00\x00\x00' + read_buf)[0]
+                right_bump = struct.unpack('>I',
+                        b'\x00\x00\x00' + read_buf)[0]
+
+                return left_bump, right_bump 
+
             if packet_id == PKT_DISTANCE:
 
                 # The buffer received from PKT_DISTANCE is 2 bytes, but
@@ -683,6 +701,12 @@ class Robot:
         # v2 = vel_forward + self.__b * vel_angular
         # self.drive_direct(v1, v2)
 
+    def drive_velocity(self, v, w):
+
+        v1 = v - self.__b * w
+        v2 = v + self.__b * w
+        self.drive_direct(v1, v2)
+
     def drive_to(self, speed, next_pos, targ_orientation=None):
 
         """
@@ -794,8 +818,7 @@ class Robot:
 
             # Get the x-y-locations of obstacles projected from kinect's depth
             # map.
-            frame_local, depth_data = slam.get_kinect_xy(SLICE_ROW)
-            self.z_t = frame_local
+            self.z_t = slam.get_kinect_xy(SLICE_ROW)
 
             # # The pose of the robot when the this scan takes place.
             # curr_pose = self.get_pose()
@@ -846,10 +869,10 @@ class Robot:
         delta_time = config.CONTROL_DELTA_TIME
         self.motion_state = MOTION_EXPLORE
 
-        random_cell = None
         next_pos = None
         follow_path = []
         follow_index = 0
+        escape_timestep = 0
 
         while True:
 
@@ -875,6 +898,13 @@ class Robot:
             #
             grid_map = self.fast_slam.highest_particle().m
 
+            lbump, rbump = self.get_sensor(PKT_BUMP)
+
+            if lbump or rbump:
+                print('BUMPER HIT!')
+                self.drive_direct(0, 0)
+                self.motion_state = MOTION_ESCAPE
+
             if self.motion_state == MOTION_EXPLORE:
 
                 # 1. We can explore once we have the local map.
@@ -885,18 +915,24 @@ class Robot:
 
                 try:
                     
-                    rand_cell = slam.random_explore_cell(self.get_pose(),
-                            grid_map, 0.35, 3, 5, RESOLUTION)
-                    self.random_cell = rand_cell
+                    # self.goal_cell = slam.random_explore_cell(self.get_pose(),
+                    #         grid_map, 0.35, 3, 5, RESOLUTION)
 
                     robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
                         MAP_SIZE, RESOLUTION)
 
-                    print('solution from {0} to {1}:'.format(robot_cell,
-                        rand_cell))
+                    self.goal_cell = slam.nearest_unexplored_cell(\
+                        slam.entropy_map(grid_map), robot_cell)
 
-                    follow_path = slam.shortest_path(robot_cell, rand_cell,
-                            grid_map, 0.35)
+                    print('goal cell:', self.goal_cell)
+
+                    print('solution from {0} to {1}:'.format(robot_cell,
+                        self.goal_cell))
+
+                    follow_path = slam.shortest_path(robot_cell, self.goal_cell,
+                            grid_map, 0.75)
+
+                    print('follow_path:', follow_path)
 
                     self.motion_state = MOTION_FOLLOW
 
@@ -926,11 +962,21 @@ class Robot:
                         RESOLUTION, center=False)
                 next_pos = np.array(next_pos)
 
-                print('next_cell:', next_cell, next_pos)
-
                 radius = Robot.inverse_kinematic(self.get_pose(), next_pos)
 
                 self.drive_radius(5, radius)
+
+            elif self.motion_state == MOTION_ESCAPE:
+
+                self.drive_velocity(-5, 0)
+
+                if escape_timestep >= 5:
+                    follow_path = []
+                    follow_index = 0
+                    self.motion_state = MOTION_EXPLORE
+                    escape_timestep = 0
+                    print('done escaping..')
+                escape_timestep += 1
 
             elif self.motion_state == MOTION_STATIC:
                 pass
@@ -1442,14 +1488,8 @@ class Robot:
         direction_vector = direction / distance
         heading_vector = rutil.angle_to_dir(curr_pose[2])
 
-        print('direction:', direction)
-        print('direction_vector:', direction_vector)
-        print('heading_vector:', heading_vector)
-
         h_err = rutil.angle_between_vectors(direction_vector,
                 heading_vector)
-
-        print('h_err:', h_err, np.degrees(h_err))
 
         # Calculate the angular direction.
         cross_prod = np.cross(heading_vector, direction_vector)
@@ -1468,14 +1508,14 @@ class Robot:
                         math.sin(math.pi/2 - h_err) / math.sin(2*h_err)
                 return radius
             else:
-                return 32768 # Special case: straight line.
+                return DRIVE_RADIUS_STRAIGHT
 
         # Case when we need to turn in place.
         else:
             if angle_dir > 0:
-                return 1
+                return DRIVE_RADIUS_COUNTER_CLOCKWISE
             else:
-                return 65535
+                return DRIVE_RADIUS_CLOCKWISE
 
         return 0
 

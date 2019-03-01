@@ -182,7 +182,7 @@ class ParticleFilter:
 
 class Particle:
 
-    def __init__(self, state, weight, grid_map=None):
+    def __init__(self, state, weight, grid_map=None, path=None):
 
         self.x = state
         self.w = weight
@@ -233,18 +233,15 @@ class FastSLAM:
             z_mat = np.copy(obs_mat)
             z_cells = z_mat[:,:2]
 
-            # State transition of each particle.
-            x_prev = np.copy(p.x)
-            # noise = (1e-2, 1e-8, 1e-8, 1e-2, 1e-10, 1e-10)
+            # Prediction step: State transition of each particle.
             noise = (1e-3, 1e-3, 1e-3, 1e-3)
             p.x = sample_motion_model_odometry(u_t, p.x, noise=noise)
-            # print('x_t-1, u_t, x_t:', x_prev, u_t, p.x)
 
             H = rutil.rigid_trans_mat3(p.x)
             z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
                     self.RESOLUTION)
 
-            # Compute the weight of this particle.
+            # Correction step: Compute the weight of this particle.
             p.w = likelihood_field_measurement_model(z_cells, p.x,\
                     np.argwhere(p.m > 0.75), self.MAP_SIZE, self.RESOLUTION)
 
@@ -267,6 +264,32 @@ class FastSLAM:
 
     def highest_particle(self):
         return self.particles[self.best_particle]
+
+    def estimate_pose(self):
+
+        x_accum = 0
+        y_accum = 0
+        h_accum = 0
+        w_accum = 0
+
+        for p in self.particles:
+            w_accum += p.w
+            x_accum += p.x[0] * w_accum
+            y_accum += p.x[1] * w_accum
+            h_accum += p.x[2] * w_accum
+
+        if w_accum == 0:
+            return None
+
+        x_est = x_accum / w_accum
+        y_est = y_accum / w_accum
+        h_est = h_accum / w_accum
+
+        return np.array([x_est, y_est, h_est])
+
+    def exploration(self):
+
+        pass
 
 def cell_to_world_pos(cell, map_size, resolution, center=False):
 
@@ -569,6 +592,33 @@ def update_occupancy_grid_map(m, obs_mat):
 
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+
+def cell_entropy(p):
+
+    return -p*math.log2(p) - (1 - p)*math.log2(1 - p)
+
+vec_cell_entropy = np.vectorize(cell_entropy)
+def entropy_map(m):
+
+    """
+    @param m: The occupancy grid map.
+    """
+
+    return vec_cell_entropy(m)
+
+def nearest_unexplored_cell(m, robot_cell, unexplored_thres=0.95):
+
+    """
+    @param m: The entropy map.
+    """
+
+    X = np.argwhere(m>0.95)
+    boundary = [rutil.euclidean_distance(x, robot_cell) > 6 for x in X]
+    X = X[boundary]
+    nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
+    dist, inds = nbrs.kneighbors([robot_cell])
+
+    return X[inds.flatten()[0]]
 
 def local_occupancy(cell_dict, out, map_size, resolution):
 
@@ -899,7 +949,11 @@ def get_kinect_xy(slice_row):
     # 480 x 640 ndarray matrix.
     depth, _ = freenect.sync_get_depth()
 
-    u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
+    # Find the rows and columns of minimum depth for each column.
+    depth = np.min(depth, axis=0)[np.newaxis]
+
+    # u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
+    u, v = np.mgrid[:depth.shape[1], :depth.shape[0]]
 
     # xyz is an Nx3 array representing 3d coordinates of objects
     # following standard right-handed coordinate system.
@@ -912,10 +966,11 @@ def get_kinect_xy(slice_row):
 
     # Change from m to cm.
     frame_local = xy * 100.0
-    depth_data = depth[v, u].flatten()
-    depth_data = depth_data[depth_data < 2047] * 0.1
 
-    return frame_local, depth_data
+    # depth_data = depth[v, u].flatten()
+    # depth_data = depth_data[depth_data < 2047] * 0.1
+
+    return frame_local 
 
 def random_explore_cell(pose, grid_map, free_thres, min_radius, max_radius, res):
 
@@ -932,7 +987,7 @@ def random_explore_cell(pose, grid_map, free_thres, min_radius, max_radius, res)
 
     return random.choice(free_cells)
 
-def neighbor_cells(cell, grid_map, free_thres):
+def neighbor_cells(cell, grid_map, occu_thres):
 
     row, col = cell
     for i in range(-1, 2):
@@ -944,7 +999,7 @@ def neighbor_cells(cell, grid_map, free_thres):
             neighbor = (row + i, col + j)
 
             if not is_out_of_bound(neighbor, grid_map.shape) and\
-               grid_map[row + i, col + j] < free_thres:
+               grid_map[row + i, col + j] < occu_thres:
                 yield neighbor
 
 def __heapsort(iterable):
@@ -962,7 +1017,7 @@ def __replace_greater(queue, node):
 
     return __heapsort(queue)
 
-def shortest_path(start, goal, grid_map, free_thres):
+def shortest_path(start, goal, grid_map, occu_thres):
 
     """
     A* algorithm to find shortest-path from the starting cell to the goal cell
@@ -975,8 +1030,9 @@ def shortest_path(start, goal, grid_map, free_thres):
 
     STEP_COST = 1
 
-    # Heuristic function: use manhattan distance between cells a and b.
-    h = lambda n : np.sum(np.abs(np.array(n.label) - np.array(goal)))
+    # Heuristic function.
+    # h = lambda n : np.sum(np.abs(np.array(n.label) - np.array(goal)))
+    h = lambda n: rutil.euclidean_distance(n.label, goal)
     
     # Path-cost function.
     g = lambda n : n.parent.g_cost + STEP_COST
@@ -1011,7 +1067,7 @@ def shortest_path(start, goal, grid_map, free_thres):
 
         explored_set[node.label] = True
 
-        for neighbor in neighbor_cells(node.label, grid_map, free_thres):
+        for neighbor in neighbor_cells(node.label, grid_map, occu_thres):
 
             child_node = Node(neighbor)
             child_node.parent = node

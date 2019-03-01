@@ -23,33 +23,33 @@ try:
     while r.is_autonomous:
 
         best_particle = r.fast_slam.highest_particle()
+        estimated_pose = r.fast_slam.estimate_pose()
 
-        d = slam.d3_map(best_particle.m, invert=True)
-        imdraw.draw_robot(d, config.GRID_MAP_RESOLUTION,\
+        entropy_map = slam.entropy_map(best_particle.m)
+
+        map_image = slam.d3_map(best_particle.m, invert=True)
+        ent_image = slam.d3_map(entropy_map)
+
+        imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,\
                 r.get_pose(), radius=2)
 
-        try:
+        if estimated_pose is not None:
+            imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,\
+                    estimated_pose, bgr=(153,51,255), radius=2)
 
-            # The position of the random goal cell.
-            random_pos = slam.cell_to_world_pos(r.random_cell,
-                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION,
-                    center=True)
+        if r.goal_cell is not None:
 
             # Clearly show the goal cell.
-            imdraw.draw_vertical_line(d, random_pos[1], (0, 0, 255))
-            imdraw.draw_horizontal_line(d, random_pos[0], (0, 0, 255))
-
-        except:
-            # Happens when the random cell is not yet generated.
-            pass
+            imdraw.draw_vertical_line(map_image, r.goal_cell[1], (0, 0, 255))
+            imdraw.draw_horizontal_line(map_image, r.goal_cell[0], (0, 0, 255))
 
         # Draw particles of fastSLAM.
         particles = r.fast_slam.particles
         for particle in particles:
-            imdraw.draw_robot(d, config.GRID_MAP_RESOLUTION, particle.x,
+            imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION, particle.x,
                 bgr=(0,255,0), radius=1, show_heading=True)
 
-        cv2.imshow('map', d)
+        cv2.imshow('map', np.hstack((map_image, ent_image)))
         cv2.waitKey(100)
 
     while 1:
@@ -59,20 +59,12 @@ try:
     # Save the map once done driving.
     now = dt.datetime.now()
     year, month, day, hr, mn = now.year, now.month, now.day, now.hour,\
-        now.minute
+       now.minute
     save_status = cv2.imwrite('./map_images/{0}_{1}_{2}_{3}_{4}.jpg'.format(\
         year, month, day, hr, mn), d)
 
     print('save_status:', save_status)
 
-    # Plot the displacement of the robot.
-    print('Drawing...')
-    r.plotter.draw()
-
-    r.halt()
-    print('Halted')
-
 except KeyboardInterrupt:
-    r.halt()
-    r.plotter.draw()
+    r.drive(0, 0)
     r.clean_up()
