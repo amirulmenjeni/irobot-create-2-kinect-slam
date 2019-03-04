@@ -382,13 +382,15 @@ class Robot:
         # SLAM related.
         ###################################################
 
+        self.camera_image = None
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
+        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 1e-6)
 
         # Initialize the map for fastSLAM.
         print('Initializing fastSLAM map...')
         for _ in range(30):
 
-            frame_local = slam.get_kinect_xy(315)
+            frame_local, _ = self.kinect_xy(detect_human=False)
             local_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
             end_cells = slam.world_frame_to_cell_pos(frame_local,\
@@ -803,14 +805,6 @@ class Robot:
 
     def thread_kinect(self):
 
-        delta_time = 0.25
-        SLICE_ROW = 315
-        DEPTH_SHAPE_COL = 640
-        RESOLUTION = config.GRID_MAP_RESOLUTION
-        MAP_SIZE = self.occ_grid_map.shape
-
-        prev_cells = None
-
         while 1:
 
             while self.z_t is not None:
@@ -818,41 +812,18 @@ class Robot:
 
             # Get the x-y-locations of obstacles projected from kinect's depth
             # map.
-            self.z_t = slam.get_kinect_xy(SLICE_ROW)
+            self.z_t, xy_humans = self.kinect_xy()
 
-            # # The pose of the robot when the this scan takes place.
-            # curr_pose = self.get_pose()
+            print('xy_humans:', xy_humans)
 
-            # # Transform the 2d coordinates in the robot's local coordinate
-            # # system to the global coordinate system.
-            # H = rutil.rigid_trans_mat3(curr_pose)
-            # frame_global = rutil.transform_pts_2d(H, frame_local)
- 
-            # # Convert the real 2d end-points into cell position (row, column)
-            # # on the grid map.
-            # end_pt_cells = slam.world_frame_to_cell_pos(frame_global,
-            #     MAP_SIZE, RESOLUTION)
+            if xy_humans is not None:
 
-            # # Get the cells on the occupancy grid map that is observed in the
-            # # current scan.
-            # pos_cell = slam.world_to_cell_pos(curr_pose[:2], MAP_SIZE,
-            #         RESOLUTION)
-            # obs_dict  = slam.observed_cells(pos_cell, end_pt_cells)
+                H = rutil.rigid_trans_mat3(self.fast_slam.highest_particle().x)
+                xy_humans = rutil.transform_pts_2d(H, xy_humans)
 
-            # obs_mat = slam.observation_matrix(obs_dict, occu=0.9, free=-0.7)
-            # curr_cells = obs_mat[:,:2]
-
-            # # Scan-match the current scan frame with the previous scan frame.
-            # if prev_cells is not None:
-            #     end_pt_cells = slam.scan_match(curr_cells, prev_cells,\
-            #         end_pt_cells)
-
-            # # Update posterior.
-            # slam.update_occupancy_grid_map(self.occ_grid_map, obs_mat)
-
-            # prev_cells = np.copy(curr_cells)
-
-            # time.sleep(config.MEASURE_DELTA_TIME)
+                cells_human = slam.world_frame_to_cell_pos(xy_humans,\
+                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                slam.update_human_grid_map(self.hum_grid_map, cells_human)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
@@ -868,11 +839,15 @@ class Robot:
 
         delta_time = config.CONTROL_DELTA_TIME
         self.motion_state = MOTION_EXPLORE
+        # self.motion_state = MOTION_STATIC
 
         next_pos = None
         follow_path = []
         follow_index = 0
         escape_timestep = 0
+
+        FORWARD_SPEED = 1
+        ESCAPE_SPEED = 5
 
         while True:
 
@@ -901,23 +876,18 @@ class Robot:
             lbump, rbump = self.get_sensor(PKT_BUMP)
 
             if lbump or rbump:
-                print('BUMPER HIT!')
                 self.drive_direct(0, 0)
                 self.motion_state = MOTION_ESCAPE
 
             if self.motion_state == MOTION_EXPLORE:
 
                 # 1. We can explore once we have the local map.
-                # 2. Pick a random free cell in the direction of the robot's
-                #    heading.
-                # 3. Find shortest-path to the randomly picked free cell.
-                # 4. Change state to MOTION_FOLLOW
+                # 2. Pick a a free cell (depends on strategy).
+                # 3. Find shortest-path to the picked free cell.
+                # 4. Change state to MOTION_FOLLOW.
 
                 try:
                     
-                    # self.goal_cell = slam.random_explore_cell(self.get_pose(),
-                    #         grid_map, 0.35, 3, 5, RESOLUTION)
-
                     robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
                         MAP_SIZE, RESOLUTION)
 
@@ -964,11 +934,11 @@ class Robot:
 
                 radius = Robot.inverse_kinematic(self.get_pose(), next_pos)
 
-                self.drive_radius(5, radius)
+                self.drive_radius(FORWARD_SPEED, radius)
 
             elif self.motion_state == MOTION_ESCAPE:
 
-                self.drive_velocity(-5, 0)
+                self.drive_velocity(-ESCAPE_SPEED, 0)
 
                 if escape_timestep >= 5:
                     follow_path = []
@@ -998,7 +968,6 @@ class Robot:
 
             self.__update_odometry(delta_distance, self.__delta_angle)
 
-            #
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
 
@@ -1406,6 +1375,64 @@ class Robot:
         inertial reference frame.
         """
         return self.__pose
+
+    def kinect_xy(self, detect_human=True):
+
+        # 480 x 640 ndarray matrix.
+        depth, _ = freenect.sync_get_depth()
+
+        # Find the rows and columns of minimum depth for each column.
+        depth_slice = np.min(depth, axis=0)[np.newaxis]
+
+        # u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
+        u, v = np.mgrid[:depth_slice.shape[1], :depth_slice.shape[0]]
+
+        # xyz is an Nx3 array representing 3d coordinates of objects
+        # following standard right-handed coordinate system.
+        xyz_obstacles, uv = calibkinect.depth2xyzuv(depth_slice[v, u], u, v)
+
+        # Convert the 3d right-handed coordinate to the robot's 2d local 
+        # coordinate system.
+        x, y, z = xyz_obstacles.T
+        xy_obstacles = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+
+        # Get the x- and y-positions of detected human in the kinect image data
+        # with respect to the robot's local frame.
+        xy_humans = None
+
+        if detect_human:
+            for (x, y, w, h) in self.kinect_human_regions():
+
+                v, u = np.mgrid[y:y+h, x:x+w]
+                xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
+                x, y, z = xyz.T
+
+                if xy_humans is None:
+                    xy_humans =\
+                        np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+                    xy_humans *= 100.0
+                else:
+                    xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+                    xy_humans = np.vstack((xy_humans, xy * 100.0))
+
+        # Change from m to cm.
+        return xy_obstacles * 100.0, xy_humans
+
+    def kinect_human_regions(self):
+
+        image, _ = freenect.sync_get_video()
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        self.camera_image = image
+
+        gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        cascade = cv2.CascadeClassifier(config.CASCADE_XML_PATH)
+
+        regions = cascade.detectMultiScale(gray_img, scaleFactor=1.05,\
+            minNeighbors=2, minSize=(30,30))
+
+        return regions
 
     def get_prev_pose(self):
 

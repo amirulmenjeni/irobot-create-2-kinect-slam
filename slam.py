@@ -6,8 +6,6 @@ import time
 import bisect
 import rutil
 import scipy.stats as st
-import calibkinect
-import freenect
 import random
 import heapq
 from data_structures import Node
@@ -593,6 +591,17 @@ def update_occupancy_grid_map(m, obs_mat):
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
+def update_human_grid_map(m, present_cells, present=0.9, absent=-0.7):
+
+    rows, cols = present_cells.T
+
+    tmp = rutil.vec_prob_to_log_odds(m) + absent
+    m = rutil.vec_log_odds_to_prob(tmp) 
+
+    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) +\
+            present*2 - absent
+    m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+
 def cell_entropy(p):
 
     return -p*math.log2(p) - (1 - p)*math.log2(1 - p)
@@ -943,34 +952,6 @@ def d3_map(posterior, invert=False):
         d = 255 - d
 
     return d
-
-def get_kinect_xy(slice_row):
-
-    # 480 x 640 ndarray matrix.
-    depth, _ = freenect.sync_get_depth()
-
-    # Find the rows and columns of minimum depth for each column.
-    depth = np.min(depth, axis=0)[np.newaxis]
-
-    # u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
-    u, v = np.mgrid[:depth.shape[1], :depth.shape[0]]
-
-    # xyz is an Nx3 array representing 3d coordinates of objects
-    # following standard right-handed coordinate system.
-    xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
-
-    # Convert the 3d right-handed coordinate to the robot's 2d local 
-    # coordinate system.
-    x, y, z = xyz.T
-    xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-
-    # Change from m to cm.
-    frame_local = xy * 100.0
-
-    # depth_data = depth[v, u].flatten()
-    # depth_data = depth_data[depth_data < 2047] * 0.1
-
-    return frame_local 
 
 def random_explore_cell(pose, grid_map, free_thres, min_radius, max_radius, res):
 

@@ -13,3 +13,7 @@ AXIAL_LENGTH = 26.0
 CONTROL_DELTA_TIME = 0.1
 MEASURE_DELTA_TIME = 0
 PF_NUM_PARTICLES = 150
+
+# Human detection.
+CASCADE_XML_PATH =\
+'/home/amenji/git/fyp-robot-navigation/data/haarcascades/haarcascade_frontalface_default.xml'
