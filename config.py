@@ -1,3 +1,5 @@
+PROJECT_PATH = '/home/amenji/git/fyp-robot-navigation/'
+
 # The resolution of the occupancy grid map in unit per pixel.
 GRID_MAP_RESOLUTION = 10.0
 GRID_MAP_SIZE = (300, 300)
@@ -17,3 +19,7 @@ PF_NUM_PARTICLES = 150
 # Human detection.
 CASCADE_XML_PATH =\
 '/home/amenji/git/fyp-robot-navigation/data/haarcascades/haarcascade_frontalface_default.xml'
+
+# SOUNDS
+SND_GREET = PROJECT_PATH + './resource/voice/m4_greet.wav'
+SND_SEE_HUMAN = PROJECT_PATH + './resource/voice/m4_see_human.wav'

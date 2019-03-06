@@ -14,6 +14,8 @@ import freenect
 import slam
 import rutil
 import config
+import speake3
+from playsound import playsound
 from icp import icp
 from libfreenect_goodies import calibkinect
 from serial.tools import list_ports
@@ -379,12 +381,26 @@ class Robot:
         self.__is_timestep_end = False
 
         ###################################################
+        # Status.
+        ###################################################
+        self.battery_perc = self.battery_charge()
+
+        ###################################################
+        # Speech engine.
+        ###################################################
+        self.speech = speake3.Speake()
+        # self.speech.set('voice', 'en+f1')
+        # self.speech.say('My battery is at {0:.{1}f} per cent.'.format(\
+        #     self.battery_perc * 100, 0))
+        # self.speech.talkback()
+
+        ###################################################
         # SLAM related.
         ###################################################
 
         self.camera_image = None
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
-        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 1e-6)
+        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
         # Initialize the map for fastSLAM.
         print('Initializing fastSLAM map...')
@@ -415,10 +431,13 @@ class Robot:
         self.z_t = None
         self.goal_cell = None
 
+
         ###################################################
         # Initialize all threads.
         ###################################################
         self.__init_threads()
+
+        print('battery: {0}%'.format(self.battery_charge() * 100))
 
     def ports_lookup(self):
 
@@ -465,6 +484,9 @@ class Robot:
             time.sleep(0.1)
 
     def clean_up(self):
+
+        self.speech.say('Ciao.')
+
         self.stop_all_threads()
 
     def start(self):
@@ -568,16 +590,13 @@ class Robot:
 
             if packet_id == PKT_STATUS:
 
-                charge = struct.unpack('>i',
-                        b'\x00\x00' + read_buf[7:9])[0]
-                capacity = struct.unpack('>i',
-                        b'\x00\x00' + read_buf[9:11])[0]
+                charge = struct.unpack('>I',
+                        b'\x00\x00' + read_buf[6:8])[0]
+                capacity = struct.unpack('>I',
+                        b'\x00\x00' + read_buf[8:10])[0]
 
-                print('charge:', charge)
-                print('capacity:', capacity)
-
-                charge = int(charge, 2)
-                capacity = int(capacity, 2)
+                # charge = int(charge, 2)
+                # capacity = int(capacity, 2)
 
                 return charge, capacity
 
@@ -814,14 +833,16 @@ class Robot:
             # map.
             self.z_t, xy_humans = self.kinect_xy()
 
-            print('xy_humans:', xy_humans)
+            # print('xy_humans:', xy_humans)
+            best_particle = self.fast_slam.highest_particle()
 
             if xy_humans is not None:
 
-                H = rutil.rigid_trans_mat3(self.fast_slam.highest_particle().x)
-                xy_humans = rutil.transform_pts_2d(H, xy_humans)
+                H = rutil.rigid_trans_mat3(best_particle.x)
 
                 cells_human = slam.world_frame_to_cell_pos(xy_humans,\
+                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                cells_human = rutil.transform_cells_2d(H, cells_human,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
                 slam.update_human_grid_map(self.hum_grid_map, cells_human)
 
@@ -846,10 +867,16 @@ class Robot:
         follow_index = 0
         escape_timestep = 0
 
-        FORWARD_SPEED = 1
+        FORWARD_SPEED = 5
         ESCAPE_SPEED = 5
 
         while True:
+
+            # if abs(self.battery_charge() - self.battery_perc) > 10:
+            #     self.battery_perc = self.battery_charge()
+            #     self.speech.say('My battery is at {0:.{1}f} per cent.'.format(\
+            #         self.battery_perc * 100, 0))
+            #     self.speech.talkback()
 
             tstart = time.time()
             
@@ -872,6 +899,7 @@ class Robot:
             # Obtain the grid map from the best particle in fastSLAM.
             #
             grid_map = self.fast_slam.highest_particle().m
+            grid_map = rutil.morph_map(grid_map)
 
             lbump, rbump = self.get_sensor(PKT_BUMP)
 
@@ -881,34 +909,42 @@ class Robot:
 
             if self.motion_state == MOTION_EXPLORE:
 
-                # 1. We can explore once we have the local map.
-                # 2. Pick a a free cell (depends on strategy).
-                # 3. Find shortest-path to the picked free cell.
-                # 4. Change state to MOTION_FOLLOW.
+                human_cell = slam.human_cell_pos(self.hum_grid_map, thres=0.75)
 
-                try:
-                    
-                    robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
-                        MAP_SIZE, RESOLUTION)
+                robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
+                    MAP_SIZE, RESOLUTION)
+
+                # If no human, we do some exploration. Otherwise, approach the
+                # human.
+                if len(human_cell) == 0:
 
                     self.goal_cell = slam.nearest_unexplored_cell(\
                         slam.entropy_map(grid_map), robot_cell)
 
                     print('goal cell:', self.goal_cell)
 
-                    print('solution from {0} to {1}:'.format(robot_cell,
-                        self.goal_cell))
+                    # print('solution from {0} to {1}:'.format(robot_cell,
+                    #     self.goal_cell))
 
                     follow_path = slam.shortest_path(robot_cell, self.goal_cell,
                             grid_map, 0.75)
 
-                    print('follow_path:', follow_path)
+                    # print('follow_path:', follow_path)
 
                     self.motion_state = MOTION_FOLLOW
 
-                except IndexError:
-                    # Happens when there is no map or no free cell (rare).
-                    pass
+                else:
+
+                    playsound(config.SND_SEE_HUMAN)
+
+                    self.goal_cell = human_cell
+
+                    print('goal human cell:', self.goal_cell)
+
+                    follow_path = slam.shortest_path(robot_cell, self.goal_cell,
+                        grid_map, 0.75)
+
+                    self.motion_state = MOTION_FOLLOW
 
             elif self.motion_state == MOTION_FOLLOW:
 
@@ -1340,7 +1376,7 @@ class Robot:
         """
 
         charge, capacity = self.get_sensor(PKT_STATUS)
-        return charge / float(capacity)
+        return charge / capacity
 
     def get_sensor(self, packet_id):
 
@@ -1379,6 +1415,7 @@ class Robot:
     def kinect_xy(self, detect_human=True):
 
         # 480 x 640 ndarray matrix.
+        image, _ = freenect.sync_get_video()
         depth, _ = freenect.sync_get_depth()
 
         # Find the rows and columns of minimum depth for each column.
@@ -1401,36 +1438,48 @@ class Robot:
         xy_humans = None
 
         if detect_human:
-            for (x, y, w, h) in self.kinect_human_regions():
+            for (x, y, w, h) in self.kinect_human_regions(image):
 
-                v, u = np.mgrid[y:y+h, x:x+w]
+                u0 = int(x+w/2)
+                u1 = u0 + 1
+                v0 = int(y+h/2)
+                v1 = v0 + 1
+
+                u, v = np.mgrid[u0:u1, v0:v1]
                 xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
                 x, y, z = xyz.T
 
                 if xy_humans is None:
                     xy_humans =\
                         np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-                    xy_humans *= 100.0
                 else:
                     xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-                    xy_humans = np.vstack((xy_humans, xy * 100.0))
+                    xy_humans = np.vstack((xy_humans, xy))
+
+        if xy_humans is not None:
+            if len(xy_humans) == 0:
+                xy_humans = None
+            else:
+                xy_humans *= 100.0
 
         # Change from m to cm.
         return xy_obstacles * 100.0, xy_humans
 
-    def kinect_human_regions(self):
+    def kinect_human_regions(self, image):
 
-        image, _ = freenect.sync_get_video()
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        self.camera_image = image
 
         gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         cascade = cv2.CascadeClassifier(config.CASCADE_XML_PATH)
 
-        regions = cascade.detectMultiScale(gray_img, scaleFactor=1.05,\
+        regions = cascade.detectMultiScale(image, scaleFactor=1.05,\
             minNeighbors=2, minSize=(30,30))
+
+        for (x, y, w, h) in regions:
+            cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 1)
+
+        self.camera_image = image
 
         return regions
 

@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import cv2
 from scipy import ndimage
 
 def rigid_trans_mat3(pose):
@@ -198,6 +199,10 @@ def euclidean_distance(a, b):
     x1, y1 = b
 
     return math.sqrt((x0 - x1)**2 + (y0 - y1)**2)
+
+def morph_map(m):
+
+    return cv2.morphologyEx(m, cv2.MORPH_OPEN, (5, 5), iterations=2)
 
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
 vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)

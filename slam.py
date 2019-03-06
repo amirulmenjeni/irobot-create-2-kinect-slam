@@ -591,16 +591,37 @@ def update_occupancy_grid_map(m, obs_mat):
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
-def update_human_grid_map(m, present_cells, present=0.9, absent=-0.7):
+def update_human_grid_map(m, present_cells, present=1.2, absent=-0.7):
 
     rows, cols = present_cells.T
 
     tmp = rutil.vec_prob_to_log_odds(m) + absent
-    m = rutil.vec_log_odds_to_prob(tmp) 
+    m[:,:] = rutil.vec_log_odds_to_prob(tmp) 
 
-    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) +\
-            present*2 - absent
+    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present - absent
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+
+def human_cell_pos(m, pos, thres=0.85):
+
+    gauss_m = np.copy(m)
+    cv2.GaussianBlur(m, (3, 3), 1.5, gauss_m, 1.5)
+
+    conds = np.logical_and(m > thres, abs(m - np.max(m)) < 1e-6)
+    
+    cells = np.argwhere(abs(m - np.max(m)) < 1e-6)
+
+    if len(cells) == 0:
+        return cells
+
+    min_cell = None
+    min_dist = math.inf
+    for c in cells:
+        d = np.linalg.norm(c - pos)
+        if d < min_dist:
+            min_dist = d
+            min_cell = c
+
+    return min_cell 
 
 def cell_entropy(p):
 
