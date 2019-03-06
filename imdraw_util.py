@@ -3,13 +3,17 @@ import cv2
 import slam
 import rutil
 
-def draw_square(d3_map, resolution, pos, bgr, width=3):
+def draw_square(d3_map, resolution, pos, bgr, width=3, pos_cell=False):
 
     assert width > 0
     assert resolution > 0
 
     map_size = d3_map.shape[:2]
-    y0, x0 = slam.world_to_cell_pos(pos, map_size, resolution)
+
+    if not pos_cell:
+        y0, x0 = slam.world_to_cell_pos(pos, map_size, resolution)
+    else:
+        y0, x0 = pos
 
     if width > 1:
         r = np.round(width / 2).astype(int)

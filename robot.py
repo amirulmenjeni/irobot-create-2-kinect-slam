@@ -15,6 +15,7 @@ import slam
 import rutil
 import config
 import speake3
+from openni import openni2, nite2
 from playsound import playsound
 from icp import icp
 from libfreenect_goodies import calibkinect
@@ -427,10 +428,10 @@ class Robot:
             num_particles=config.PF_NUM_PARTICLES)
         print('Done.')
 
+        self.path = []
         self.u_t = None
         self.z_t = None
         self.goal_cell = None
-
 
         ###################################################
         # Initialize all threads.
@@ -879,6 +880,15 @@ class Robot:
             #     self.speech.talkback()
 
             tstart = time.time()
+
+            robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
+                MAP_SIZE, RESOLUTION)
+
+            if len(self.path) == 0:
+                self.path.append(robot_cell)
+            else:
+                if robot_cell != self.path[-1]:
+                    self.path.append(robot_cell)
             
             #
             # Read odometry sensor. 
@@ -909,10 +919,8 @@ class Robot:
 
             if self.motion_state == MOTION_EXPLORE:
 
-                human_cell = slam.human_cell_pos(self.hum_grid_map, thres=0.75)
-
-                robot_cell = slam.world_to_cell_pos(self.get_pose()[:2],\
-                    MAP_SIZE, RESOLUTION)
+                human_cell = slam.human_cell_pos(self.hum_grid_map, robot_cell,
+                        thres=0.75)
 
                 # If no human, we do some exploration. Otherwise, approach the
                 # human.
@@ -939,7 +947,7 @@ class Robot:
 
                     self.goal_cell = human_cell
 
-                    print('goal human cell:', self.goal_cell)
+                    print('FOUND HUMAN:', self.goal_cell)
 
                     follow_path = slam.shortest_path(robot_cell, self.goal_cell,
                         grid_map, 0.75)
