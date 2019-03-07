@@ -23,7 +23,14 @@ class Kinect:
     JOINT_LEFT_FOOT = 13
     JOINT_RIGHT_FOOT = 14
 
-    def __init__(self, redist):
+    MAX_READING = 2**12 - 1
+
+    def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640)):
+
+        self.video_h = video_shape[0]
+        self.video_w = video_shape[1]
+        self.depth_h = depth_shape[0]
+        self.depth_w = depth_shape[1]
 
         openni2.initialize(redist)
         nite2.initialize(redist)
@@ -35,6 +42,13 @@ class Kinect:
 
         self.depth_stream.set_mirroring_enabled(False)
         self.color_stream.set_mirroring_enabled(False)
+
+        self.depth_stream.set_video_mode(\
+            _openni2.OniVideoMode(\
+            pixelFormat=_openni2.OniPixelFormat.ONI_PIXEL_FORMAT_DEPTH_1_MM,\
+            resolutionX=self.depth_w,
+            resolutionY=self.depth_h,
+            fps=30))
 
         self.depth_stream.start()
         self.color_stream.start()
@@ -48,7 +62,7 @@ class Kinect:
             sys.exit(-1)
 
         # This causes error.
-        # self.dev.set_depth_color_sync_enabled(True)
+        self.dev.set_depth_color_sync_enabled(False)
 
         # Align depth to rgb.
         self.dev.set_image_registration_mode(\
@@ -57,16 +71,20 @@ class Kinect:
     def get_rgb(self):
 
         data = self.color_stream.read_frame().get_buffer_as_uint8()
-        bgr = np.frombuffer(data, dtype=np.uint8).reshape(480, 640, 3)
+        bgr = np.fromstring(data, dtype=np.uint8).reshape(480, 640, 3)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         return rgb
 
     def get_depth(self):
 
         data = self.depth_stream.read_frame().get_buffer_as_uint16()
-        dmap = np.frombuffer(data, dtype=np.uint16).reshape(480, 640)
+        dmap = np.fromstring(data, dtype=np.uint16).reshape(480, 640)
+
+        # No reading set to max depth.
+        dmap[abs(dmap - 0) < 1e-6] = Kinect.MAX_READING
+
         return dmap
-    
+
     def get_users(self):
 
         frame = self.user_tracker.read_frame()
@@ -83,11 +101,32 @@ class Kinect:
 
     def depth_display(depth_map):
 
-        d = np.uint8(depth_map.astype(float) * 255 / 2**12 - 1)
+        d = np.uint8(depth_map.astype(float) * 255 / Kinect.MAX_READING)
         d = 255 - cv2.cvtColor(d, cv2.COLOR_GRAY2RGB)
         return d
 
-    def cleanup(self):
+    def depth_map_to_world(self, depth_map, slice_row=-1):
+
+        if slice_row < 0:
+            depth_slice = np.min(depth_map, axis=0)[np.newaxis]
+        else:
+            depth_slice = depth_map[slice_row, :][np.newaxis]
+
+        world_xyz = [0] * self.depth_w
+
+        for u in range(self.depth_w):
+            world_xyz[u] = openni2.convert_depth_to_world(\
+                self.depth_stream, u, 0, depth_slice[0][u])
+
+        world_xyz = np.array(world_xyz)
+
+        x, y, z = world_xyz.T
+        obstacles_xy = np.hstack((z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+        obstacles_xy *= 0.1 # mm to cm
+
+        return obstacles_xy
+
+    def clean_up(self):
         self.color_stream.stop()
         self.depth_stream.stop()
         openni2.unload()
@@ -97,21 +136,25 @@ if __name__ == '__main__':
 
     kin = Kinect('./redist')
 
-    while 1:
-        rgb = kin.get_rgb()
+    try:
+        while 1:
+            rgb = kin.get_rgb()
 
-        dmap = kin.get_depth()
-        dimg = Kinect.depth_display(dmap)
+            dmap = kin.get_depth()
+            dimg = Kinect.depth_display(dmap)
 
-        for user in kin.get_users():
-            print('id:', user.id)
-            # joint = user.skeleton.joints[Kinect.JOINT_TORSO]
-            # x, y, z = joint.position.x, joint.position.y, joint.position.z
-            x, y, z = user.centerOfMass.x, user.centerOfMass.y,\
-                user.centerOfMass.z
-            print('user pos:', (x, y, z))
+            print(dmap)
 
-        cv2.imshow('Video', np.hstack((rgb, dimg)))
-        cv2.waitKey(60)
+            for user in kin.get_users():
+                print('id:', user.id)
+                # joint = user.skeleton.joints[Kinect.JOINT_TORSO]
+                # x, y, z = joint.position.x, joint.position.y, joint.position.z
+                x, y, z = user.centerOfMass.x, user.centerOfMass.y,\
+                    user.centerOfMass.z
+                print('user pos:', (x, y, z))
 
-    kin.cleanup()
+            cv2.imshow('Video', np.hstack((rgb, dimg)))
+            cv2.waitKey(60)
+
+    except KeyboardInterrupt:
+        kin.cleanup()
