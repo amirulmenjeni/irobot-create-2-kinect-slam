@@ -10,12 +10,10 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import csv
-import freenect
 import slam
 import rutil
 import config
-import speake3
-from openni import openni2, nite2
+import logging
 from playsound import playsound
 from icp import icp
 from libfreenect_goodies import calibkinect
@@ -340,6 +338,7 @@ class Robot:
         self.__port = port
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
 
+        # Run start command.
         self.start()
 
         # Store issued command variables.
@@ -385,15 +384,6 @@ class Robot:
         # Status.
         ###################################################
         self.battery_perc = self.battery_charge()
-
-        ###################################################
-        # Speech engine.
-        ###################################################
-        self.speech = speake3.Speake()
-        # self.speech.set('voice', 'en+f1')
-        # self.speech.say('My battery is at {0:.{1}f} per cent.'.format(\
-        #     self.battery_perc * 100, 0))
-        # self.speech.talkback()
 
         ###################################################
         # SLAM related.
@@ -486,9 +476,9 @@ class Robot:
 
     def clean_up(self):
 
-        self.speech.say('Ciao.')
-
         self.stop_all_threads()
+        nite2.unload()
+        openni2.unload()
 
     def start(self):
 
@@ -872,12 +862,6 @@ class Robot:
         ESCAPE_SPEED = 5
 
         while True:
-
-            # if abs(self.battery_charge() - self.battery_perc) > 10:
-            #     self.battery_perc = self.battery_charge()
-            #     self.speech.say('My battery is at {0:.{1}f} per cent.'.format(\
-            #         self.battery_perc * 100, 0))
-            #     self.speech.talkback()
 
             tstart = time.time()
 
