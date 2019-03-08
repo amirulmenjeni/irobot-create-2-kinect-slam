@@ -102,13 +102,13 @@ class Kinect:
     def get_users_pos(self):
 
         users = self.get_users()
-        positions = [0] * len(users)
+        positions = []
 
-        for i in range(len(users)):
+        for user in users:
 
-            cmass = users[i].centerOfMass
+            cmass = user.centerOfMass
             x, y, z = cmass.x, cmass.y, cmass.z
-            positions[i] = [z, -x]
+            positions.append([z, -x])
 
         positions = np.array(positions)
 
@@ -142,6 +142,7 @@ class Kinect:
         return obstacles_xy
 
     def clean_up(self):
+
         self.color_stream.stop()
         self.depth_stream.stop()
         openni2.unload()
