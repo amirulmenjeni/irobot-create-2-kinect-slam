@@ -22,6 +22,7 @@ from icp import icp
 from libfreenect_goodies import calibkinect
 from serial.tools import list_ports
 from kinematic import Trajectory
+from sklearn.neighbors import NearestNeighbors
 
 # Opcodes
 START        = chr(128)
@@ -54,8 +55,9 @@ THREAD_KINECT = 1
 
 MOTION_STATIC = 0
 MOTION_EXPLORE = 1
-MOTION_FOLLOW = 2
+MOTION_APPROACH = 2
 MOTION_ESCAPE = 3
+
 
 # Special radius values for DRIVE command.
 DRIVE_RADIUS_STRAIGHT = 32768
@@ -305,7 +307,7 @@ class StaticPlotter:
 
         plt.grid()
         plt.show()
-
+    
 class Robot:
 
     def __init__(self, b=26, port='', max_speed=10,
@@ -469,7 +471,7 @@ class Robot:
         """
 
         self.threads = [
-                threading.Thread(target=Robot.thread_motion3, args=(self,),\
+                threading.Thread(target=Robot.thread_motion4, args=(self,),\
                 name='Motion'),\
                 threading.Thread(target=Robot.thread_kinect, args=(self,),\
                 name='Kinect'),\
@@ -826,6 +828,19 @@ class Robot:
         if not self.threads[i].is_alive():
             self.threads[i].start()
 
+    def next_cell(self, grid_map, curr_pos, goal_pos):
+
+        robot_cell = slam.world_to_cell_pos(curr_pos,\
+            config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+        goal_cell = slam.nearest_unexplored_cell(\
+            slam.entropy_map(grid_map), robot_cell)
+
+        next_cell = slam.shortest_path(robot_cell, goal_cell,
+                grid_map, 0.75)[0]
+
+        return next_cell
+
     def thread_kinect(self):
 
         while 1:
@@ -858,6 +873,151 @@ class Robot:
             slam.update_human_grid_map(self.hum_grid_map, cells_human)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
+                break
+
+    def thread_motion4(self):
+
+        delta_time = config.CONTROL_DELTA_TIME
+
+        self.motion_state = MOTION_STATIC
+        self.is_autonomous = True
+
+        next_cell = None
+        goal_cell = None
+        escaped_distance = 0
+
+        while 1:
+
+            tstart = time.time()
+
+            robot_cell = self.get_cell_pos()
+            best_particle = self.fast_slam.highest_particle()
+            grid_map = best_particle.m
+            grid_map = rutil.morph_map(grid_map)
+
+            ##################################################
+            # Start odometry measurement for this iteration.
+            ##################################################
+            delta_distance, delta_angle = 0, 0
+            self.get_sensor(PKT_MOTION)
+
+            ##################################################
+            # Check bump sensors.
+            ##################################################
+            lbump, rbump = self.get_sensor(PKT_BUMP)
+
+            ##################################################
+            # Update fastSLAM particles when u_t is not static and when we have
+            # observation z_t.
+            ##################################################
+            if self.z_t is not None and self.u_t is not None and\
+                np.sum(self.u_t) != 0:
+                self.fast_slam.update(self.z_t, self.u_t)
+                self.z_t = None
+                self.u_t = None
+
+            ##################################################
+            # Determine state based on whether we found a human, bumped into an
+            # obstacle, or want to explore.
+            ##################################################
+            if self.motion_state == MOTION_STATIC:
+
+                nearest_human = self.get_nearest_human()
+
+                if nearest_human:
+                    self.motion_state = MOTION_APPROACH
+
+                else:
+                    self.motion_state = MOTION_EXPLORE
+
+            if lbump or rbump:
+                self.motion_state = MOTION_ESCAPE
+
+            ##################################################
+            # Goal update. For MOTION_EXPLORE, the goal cell is set only once.
+            # However, for MOTION_APPROACH, the goal cell need to be updated in
+            # each timestep due to potential moving target.
+            ##################################################
+            if self.motion_state == MOTION_APPROACH:
+                nearest_human = self.get_nearest_human()
+                if nearest_human:
+                    goal_cell = slam.world_to_cell_pos(nearest_human,\
+                        config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+            elif self.motion_state == MOTION_EXPLORE:
+                if goal_cell is None:
+                    goal_cell = slam.nearest_unexplored_cell(\
+                        slam.entropy_map(grid_map),\
+                        robot_cell)
+            self.goal_cell = goal_cell
+
+            ##################################################
+            # Planning: MOTION_EXPLORE and MOTION_APPROACH both
+            # update their plan during each timestep (online planning).
+            ##################################################
+            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
+                next_cell = slam.shortest_path(robot_cell, goal_cell,\
+                    grid_map, 0.75)[0]
+
+            ##################################################
+            # Control execution.
+            ##################################################
+            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
+
+                goal_pos = slam.cell_to_world_pos(goal_cell,\
+                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+                if rutil.is_in_circle(goal_pos,\
+                    config.GRID_MAP_RESOLUTION / 2, self.get_pose()[:2]):
+
+                    self.test_song()
+
+                    # Set goal and next cell back to None to be reset later.
+                    self.goal_cell = None
+                    goal_cell = None
+                    next_cell = None
+
+                else:
+
+                    next_pos = slam.cell_to_world_pos(next_cell,\
+                        config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+                    turn_radius = self.inverse_kinematic(next_pos)
+
+                    self.drive_radius(\
+                        config.NORMAL_DRIVE_SPEED, turn_radius)
+
+                    # Reset goal cell when the goal is a moving object.
+                    if self.motion_state == MOTION_APPROACH:
+                        goal_cell = None
+
+            elif self.motion_state == MOTION_ESCAPE:
+
+                if escaped_distance < 10:
+                    self.drive_velocity(-config.ESCAPE_OBSTACLE_SPEED, 0)
+                else:
+                    self.drive_velocity(0, 0)
+                    self.motion_state = MOTION_STATIC
+
+            ##################################################
+            # Record change in distance and angle for this iteration.
+            ##################################################
+            dt = time.time() - tstart
+            time.sleep(max(delta_time, dt))
+            try:
+                delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+            except TypeError:
+                pass
+
+            self.__delta_distance = delta_distance
+            self.__delta_angle = math.radians(delta_angle)
+
+            # Use the odometry measurement as the "control".
+            self.u_t = [delta_distance, self.__delta_angle]
+
+            self.__update_odometry(delta_distance, self.__delta_angle)
+
+            if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
 
     def thread_motion3(self):
@@ -963,7 +1123,7 @@ class Robot:
                         RESOLUTION, center=False)
                 next_pos = np.array(next_pos)
 
-                radius = Robot.inverse_kinematic(self.get_pose(), next_pos)
+                radius = self.inverse_kinematic(next_pos)
 
                 self.drive_radius(FORWARD_SPEED, radius)
 
@@ -1383,6 +1543,20 @@ class Robot:
 
         return self.interpret_code(packet_id, self.recv_code(packet_id))
 
+    def get_nearest_human(self, thres=0.75):
+
+        assert 0 <= thres <= 1.0
+
+        X = np.argwhere(self.hum_grid_map < (1.0 - thres))
+
+        if len(X) == 0:
+            return False
+
+        nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
+        dist, inds = nbrs.kneighbors([self.get_cell_pos()])
+
+        return X[inds.flatten()[0]] 
+
     def get_motion(self):
 
         """
@@ -1406,6 +1580,11 @@ class Robot:
         inertial reference frame.
         """
         return self.__pose
+
+    def get_cell_pos(self):
+
+        return slam.world_to_cell_pos(self.get_pose()[:2],\
+            config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
     def kinect_xy(self, detect_human=True):
 
@@ -1542,8 +1721,9 @@ class Robot:
 
         return v - b * w, v + b * w
 
-    def inverse_kinematic(curr_pose, next_pos):
+    def inverse_kinematic(self, next_pos):
 
+        curr_pose = self.get_pose()
         x0, y0, h0 = curr_pose
         x1, y1 = next_pos
 
