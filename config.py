@@ -35,4 +35,4 @@ GRID_MAP_SIZE = (300, 300)
 # SOUNDS
 ##################################################
 SND_GREET = PROJECT_PATH + './resource/voice/m4_greet.wav'
-SND_SEE_HUMAN a PROJECT_PATH + './resource/voice/m4_see_human.wav'
+SND_SEE_HUMAN = PROJECT_PATH + './resource/voice/m4_see_human.wav'
