@@ -947,6 +947,10 @@ class Robot:
                 if nearest_human is None:
                     self.motion_state = MOTION_STATIC
 
+            elif self.motion_state == MOTION_ESCAPE:
+                if not (lbump and rbump):
+                    self.motion_state = MOTION_EXPLORE
+
             if lbump or rbump:
                 self.motion_state = MOTION_ESCAPE
 
@@ -1027,12 +1031,7 @@ class Robot:
 
             elif self.motion_state == MOTION_ESCAPE:
 
-                if escaped_distance < 10:
-                    self.drive_velocity(-config.ESCAPE_OBSTACLE_SPEED, 0)
-                else:
-                    escaped_distance = 0
-                    self.drive_velocity(0, 0)
-                    self.motion_state = MOTION_STATIC
+                self.drive_velocity(-config.ESCAPE_OBSTACLE_SPEED, 0)
 
             elif self.motion_state == MOTION_STATIC:
                 self.drive_velocity(0, 0)
@@ -1048,9 +1047,6 @@ class Robot:
                 delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
             except TypeError:
                 pass
-
-            if self.motion_state == MOTION_ESCAPE:
-                escaped_distance += delta_distance
 
             self.__delta_distance = delta_distance
             self.__delta_angle = math.radians(delta_angle)
