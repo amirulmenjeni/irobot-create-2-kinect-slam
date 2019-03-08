@@ -184,7 +184,7 @@ def prob_to_log_odds(p):
     Convert the probability value p to its log odds notation.
     """
 
-    return math.log10(p / (1.0 - p))
+    return math.log(p / (1.0 - p))
 
 def manhattan_distance(a, b):
 
