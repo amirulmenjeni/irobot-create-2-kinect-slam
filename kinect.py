@@ -102,17 +102,25 @@ class Kinect:
     def get_users_pos(self):
 
         users = self.get_users()
-        positions = []
+        positions = [0] * len(users)
 
-        for user in users:
+        for i in range(len(users)):
 
-            cmass = user.centerOfMass
+            cmass = users[i].centerOfMass
             x, y, z = cmass.x, cmass.y, cmass.z
-            positions.append([z, -x])
+            positions[i] = [z, -x]
 
         positions = np.array(positions)
 
         return positions
+
+    def get_depth_fps(self):
+
+        return self.depth_stream.get_video_mode().fps
+
+    def get_color_fps(self):
+
+        return self.color_stream.get_video_mode().fps
 
     def depth_display(depth_map):
 
@@ -159,9 +167,11 @@ if __name__ == '__main__':
             dmap = kin.get_depth()
             dimg = Kinect.depth_display(dmap)
 
-
             for upos in kin.get_users_pos():
                 print('wpos:', upos)
+
+            print('depth:', kin.depth_stream.get_video_mode().fps)
+            print('color:', kin.color_stream.get_video_mode().fps)
 
             cv2.imshow('Video', np.hstack((rgb, dimg)))
             cv2.waitKey(60)
