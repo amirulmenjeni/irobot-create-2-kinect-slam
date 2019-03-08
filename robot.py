@@ -14,6 +14,9 @@ import slam
 import rutil
 import config
 import logging
+from kinect import Kinect
+import freenect
+from openni import openni2
 from playsound import playsound
 from icp import icp
 from libfreenect_goodies import calibkinect
@@ -380,6 +383,8 @@ class Robot:
 
         self.__is_timestep_end = False
 
+        self.kin = Kinect(config.PRIMESENSE_REDIST_PATH)
+
         ###################################################
         # Status.
         ###################################################
@@ -393,22 +398,7 @@ class Robot:
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
         self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
-        # Initialize the map for fastSLAM.
-        print('Initializing fastSLAM map...')
-        for _ in range(30):
-
-            frame_local, _ = self.kinect_xy(detect_human=False)
-            local_map = np.full(config.GRID_MAP_SIZE, 0.5)
-
-            end_cells = slam.world_frame_to_cell_pos(frame_local,\
-                config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
-            mid = np.array(np.array(config.GRID_MAP_SIZE) // 2).astype(int)
-            obs_dict = slam.observed_cells(mid, end_cells)
-            obs_mat = slam.observation_matrix(obs_dict, occu=0.9, free=-0.7)
-
-            slam.update_occupancy_grid_map(local_map, obs_mat)
-
-            time.sleep(0.01)
+        local_map = self.__init_local_map()
 
         self.fast_slam = slam.FastSLAM(\
             self.occ_grid_map.shape,
@@ -416,7 +406,6 @@ class Robot:
             config.CONTROL_DELTA_TIME,
             np.copy(local_map),
             num_particles=config.PF_NUM_PARTICLES)
-        print('Done.')
 
         self.path = []
         self.u_t = None
@@ -429,6 +418,31 @@ class Robot:
         self.__init_threads()
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
+
+    def __init_local_map(self, iterations=30):
+
+        local_map = np.full(config.GRID_MAP_SIZE, 0.5)
+
+        # Initialize the map for fastSLAM.
+        print('Initializing fastSLAM map...')
+        for _ in range(iterations):
+
+            depth_map = self.kin.get_depth()
+            world_xy = self.kin.depth_map_to_world(depth_map)
+
+            end_cells = slam.world_frame_to_cell_pos(world_xy,\
+                config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+            mid = np.array(np.array(config.GRID_MAP_SIZE) // 2).astype(int)
+            obs_dict = slam.observed_cells(mid, end_cells)
+            obs_mat = slam.observation_matrix(\
+                obs_dict, config.GRID_MAP_SIZE, occu=0.9, free=-0.7)
+
+            slam.update_occupancy_grid_map(local_map, obs_mat)
+
+            time.sleep(1.0 / self.kin.get_depth_fps())
+        print('Done.')
+
+        return local_map
 
     def ports_lookup(self):
 
@@ -477,8 +491,7 @@ class Robot:
     def clean_up(self):
 
         self.stop_all_threads()
-        nite2.unload()
-        openni2.unload()
+        self.kin.clean_up()
 
     def start(self):
 
@@ -820,14 +833,17 @@ class Robot:
             while self.z_t is not None:
                 time.sleep(1e-6)
 
-            # Get the x-y-locations of obstacles projected from kinect's depth
-            # map.
-            self.z_t, xy_humans = self.kinect_xy()
+            # The x-y-locations of obstacles projected from kinect's depth.
+            depth_map = self.kin.get_depth()
+            self.z_t = self.kin.depth_map_to_world(depth_map)
 
-            # print('xy_humans:', xy_humans)
+            # The x- and y-locations of humans using NiTE2 user tracker,
+            # already converted to the robot's local frame.
+            xy_humans = self.kin.get_users_pos()
+
             best_particle = self.fast_slam.highest_particle()
 
-            if xy_humans is not None:
+            if len(xy_humans) > 0:
 
                 H = rutil.rigid_trans_mat3(best_particle.x)
 
@@ -835,6 +851,8 @@ class Robot:
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
                 cells_human = rutil.transform_cells_2d(H, cells_human,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                cells_human = slam.remove_outbound_cells(\
+                    cells_human, config.GRID_MAP_SIZE)
                 slam.update_human_grid_map(self.hum_grid_map, cells_human)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
@@ -858,8 +876,8 @@ class Robot:
         follow_index = 0
         escape_timestep = 0
 
-        FORWARD_SPEED = 5
-        ESCAPE_SPEED = 5
+        FORWARD_SPEED = config.NORMAL_DRIVE_SPEED
+        ESCAPE_SPEED = config.ESCAPE_OBSTACLE_SPEED
 
         while True:
 
@@ -880,9 +898,10 @@ class Robot:
             delta_distance, delta_angle = 0, 0
             self.get_sensor(PKT_MOTION)
 
-            ## Update fastSLAM particles when u_t is not static and when we have
-            ## observation z_t.
-            ##
+            #
+            # Update fastSLAM particles when u_t is not static and when we have
+            # observation z_t.
+            #
             if self.z_t is not None and self.u_t is not None and\
                 np.sum(self.u_t) != 0:
                 self.fast_slam.update(self.z_t, self.u_t)
@@ -895,48 +914,30 @@ class Robot:
             grid_map = self.fast_slam.highest_particle().m
             grid_map = rutil.morph_map(grid_map)
 
+            #
+            # Bump sensors.
+            #
             lbump, rbump = self.get_sensor(PKT_BUMP)
-
             if lbump or rbump:
                 self.drive_direct(0, 0)
                 self.motion_state = MOTION_ESCAPE
 
             if self.motion_state == MOTION_EXPLORE:
 
-                human_cell = slam.human_cell_pos(self.hum_grid_map, robot_cell,
-                        thres=0.75)
+                self.goal_cell = slam.nearest_unexplored_cell(\
+                    slam.entropy_map(grid_map), robot_cell)
 
-                # If no human, we do some exploration. Otherwise, approach the
-                # human.
-                if len(human_cell) == 0:
+                print('goal cell:', self.goal_cell)
 
-                    self.goal_cell = slam.nearest_unexplored_cell(\
-                        slam.entropy_map(grid_map), robot_cell)
+                # print('solution from {0} to {1}:'.format(robot_cell,
+                #     self.goal_cell))
 
-                    print('goal cell:', self.goal_cell)
-
-                    # print('solution from {0} to {1}:'.format(robot_cell,
-                    #     self.goal_cell))
-
-                    follow_path = slam.shortest_path(robot_cell, self.goal_cell,
-                            grid_map, 0.75)
-
-                    # print('follow_path:', follow_path)
-
-                    self.motion_state = MOTION_FOLLOW
-
-                else:
-
-                    playsound(config.SND_SEE_HUMAN)
-
-                    self.goal_cell = human_cell
-
-                    print('FOUND HUMAN:', self.goal_cell)
-
-                    follow_path = slam.shortest_path(robot_cell, self.goal_cell,
+                follow_path = slam.shortest_path(robot_cell, self.goal_cell,
                         grid_map, 0.75)
 
-                    self.motion_state = MOTION_FOLLOW
+                # print('follow_path:', follow_path)
+
+                self.motion_state = MOTION_FOLLOW
 
             elif self.motion_state == MOTION_FOLLOW:
 
@@ -968,7 +969,7 @@ class Robot:
 
                 self.drive_velocity(-ESCAPE_SPEED, 0)
 
-                if escape_timestep >= 5:
+                if escape_timestep >= 3:
                     follow_path = []
                     follow_index = 0
                     self.motion_state = MOTION_EXPLORE
@@ -1406,12 +1407,18 @@ class Robot:
 
     def kinect_xy(self, detect_human=True):
 
+        """
+        DEPRECATED
+        """
+
         # 480 x 640 ndarray matrix.
         image, _ = freenect.sync_get_video()
         depth, _ = freenect.sync_get_depth()
 
-        # Find the rows and columns of minimum depth for each column.
+        # # Find the rows and columns of minimum depth for each column.
         depth_slice = np.min(depth, axis=0)[np.newaxis]
+
+        # print('depth slice:', depth_slice, depth_slice.shape)
 
         # u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
         u, v = np.mgrid[:depth_slice.shape[1], :depth_slice.shape[0]]
@@ -1425,39 +1432,26 @@ class Robot:
         x, y, z = xyz_obstacles.T
         xy_obstacles = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
 
+        # print('obs:', xy_obstacles, xy_obstacles.dtype)
+
         # Get the x- and y-positions of detected human in the kinect image data
         # with respect to the robot's local frame.
-        xy_humans = None
+        xy_humans = []
 
         if detect_human:
-            for (x, y, w, h) in self.kinect_human_regions(image):
+            pass
 
-                u0 = int(x+w/2)
-                u1 = u0 + 1
-                v0 = int(y+h/2)
-                v1 = v0 + 1
-
-                u, v = np.mgrid[u0:u1, v0:v1]
-                xyz, uv = calibkinect.depth2xyzuv(depth[v, u], u, v)
-                x, y, z = xyz.T
-
-                if xy_humans is None:
-                    xy_humans =\
-                        np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-                else:
-                    xy = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-                    xy_humans = np.vstack((xy_humans, xy))
-
-        if xy_humans is not None:
-            if len(xy_humans) == 0:
-                xy_humans = None
-            else:
-                xy_humans *= 100.0
+        if len(xy_humans) > 0:
+            xy_humans *= 100.0
 
         # Change from m to cm.
         return xy_obstacles * 100.0, xy_humans
 
     def kinect_human_regions(self, image):
+
+        """
+        SLOW AND POOR. DO NOT USE.
+        """
 
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 

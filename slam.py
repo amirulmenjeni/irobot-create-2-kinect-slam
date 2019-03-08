@@ -221,7 +221,8 @@ class FastSLAM:
 
         # An Nx3 matrix where each row is [row, col, val], and where val is the
         # update to the belief on cell (row, col) on the occupancy grid map.
-        obs_mat = observation_matrix(obs_dict, occu=0.9, free=-0.7)
+        obs_mat = observation_matrix(\
+            obs_dict, self.MAP_SIZE, occu=0.9, free=-0.7)
 
         max_weight = -1
         max_particle_index = 0
@@ -380,7 +381,7 @@ def observed_cells(pos, end_pt_cells):
 
     return cells
 
-def observation_matrix(cell_dict, occu=1, free=0):
+def observation_matrix(cell_dict, map_size, occu=1, free=0):
 
     """
     Returns an Nx3 numpy array where each row [row, col, v] represents the row,
@@ -391,14 +392,15 @@ def observation_matrix(cell_dict, occu=1, free=0):
         and v is the occupancy value on that cell.
     """
 
-    a = np.zeros((len(cell_dict), 3), dtype=float)
+    a = np.zeros((0, 3), dtype=np.float64)
     for i, d in enumerate(cell_dict.items()):
         row, col = d[0]
-        if d[1]:
-            val = occu
-        else:
-            val = free
-        a[i] = [int(row), int(col), val]
+        if not is_out_of_bound((row, col), map_size):
+            if d[1]:
+                val = occu
+            else:
+                val = free
+            a = np.vstack((a, [int(row), int(col), val]))
     return a
 
 def observation_map(cell_dict, map_size):
@@ -436,10 +438,18 @@ def is_out_of_bound(cell, map_size):
     Checks if the cell is out of bound given the map size.
     """
 
-    if cell[0] >= (map_size[1] - 1) or cell[1] >= map_size[0] or\
-       cell[0] < 0 or cell[1] < 0:
-           return True
+    if cell[0] > (map_size[0] - 1) or cell[1] > (map_size[1] - 1) or\
+            cell[0] < 0 or cell[1] < 0:
+        return True      
     return False
+
+def remove_outbound_cells(cells, map_size):
+
+    inbound = np.argwhere(\
+        np.logical_and(0 <= cells[:,0] < map_size[0],\
+                       0 <= cells[:,1] < map_size[1]))
+
+    return cells[inbound]
 
 def __line_low(cells, p0, p1):
 
@@ -587,6 +597,9 @@ def occupancy_grid_mapping(posterior, prev_posterior, obs_dict):
 def update_occupancy_grid_map(m, obs_mat):
 
     rows, cols = obs_mat[:,0].astype(int), obs_mat[:,1].astype(int)
+
+    # print(rows)
+    # print(cols)
 
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
