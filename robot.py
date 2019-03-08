@@ -988,8 +988,13 @@ class Robot:
             # update their plan during each timestep (online planning).
             ##################################################
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
-                next_cell = slam.shortest_path(robot_cell, goal_cell,\
-                    grid_map, 0.75)[0]
+                try:
+                    next_cell = slam.shortest_path(robot_cell, goal_cell,\
+                        grid_map, 0.75)[0]
+                except IndexError:
+                    # This happens when there's no more next cell to go to
+                    # (i.e., we're quite close to the goal cell).
+                    pass
 
             ##################################################
             # Control execution.
