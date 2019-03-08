@@ -13,11 +13,13 @@ import config
 
 r = Robot()
 
-try:
+print('RUN')
+r.drive(0, 0)
+time.sleep(2)
 
-    print('RUN')
-    r.drive(0, 0)
-    time.sleep(2)
+map_image = None
+
+try:
 
     while not r.is_autonomous:
         pass
@@ -32,10 +34,13 @@ try:
 
         map_image = slam.d3_map(best_particle.m, invert=True)
         ent_image = slam.d3_map(entropy_map)
-        hum_image = slam.d3_map(r.hum_grid_map, invert=True)
+        hum_image = slam.d3_map(r.hum_grid_map)
 
         imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,\
-                r.get_pose(), radius=2)
+                best_particle.x, radius=2)
+
+        imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+                best_particle.x, bgr=(0, 255, 0), radius=1, show_heading=True)
 
         if estimated_pose is not None:
             imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,\
@@ -48,30 +53,30 @@ try:
             imdraw.draw_horizontal_line(map_image, r.goal_cell[0], (0, 0, 255))
 
         # Draw particles of fastSLAM.
-        particles = r.fast_slam.particles
-        for particle in particles:
-            imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION, particle.x,
-                bgr=(0,255,0), radius=1, show_heading=True)
+        # particles = r.fast_slam.particles
+        # for particle in particles:
+        #     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION, particle.x,
+        #         bgr=(0,255,0), radius=1, show_heading=True)
+
+        # for cell in r.path:
+        #     imdraw.draw_square(map_image, config.GRID_MAP_RESOLUTION,\
+        #         cell, (125, 255, 125), width=1, pos_cell=True)
 
         cv2.imshow('map', np.hstack((map_image, hum_image, ent_image)))
 
-        if r.camera_image is not None:
-            cv2.imshow('camera', r.camera_image)
         cv2.waitKey(100)
 
-    while 1:
-        # Wait KeyboardInterrupt.
-        pass
-
     # Save the map once done driving.
+    print('Saving...')
     now = dt.datetime.now()
     year, month, day, hr, mn = now.year, now.month, now.day, now.hour,\
        now.minute
-    save_status = cv2.imwrite('./map_images/{0}_{1}_{2}_{3}_{4}.jpg'.format(\
+    save_status = cv2.imwrite('./{0}_{1}_{2}_{3}_{4}.jpg'.format(\
         year, month, day, hr, mn), d)
-
     print('save_status:', save_status)
 
 except KeyboardInterrupt:
+    print('Stop explore...')
     r.drive(0, 0)
+    time.sleep(0.5)
     r.clean_up()
