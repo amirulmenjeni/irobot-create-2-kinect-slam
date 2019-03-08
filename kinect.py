@@ -108,7 +108,10 @@ class Kinect:
 
             cmass = users[i].centerOfMass
             x, y, z = cmass.x, cmass.y, cmass.z
-            positions[i] = [z, -x]
+
+            # Ignore erroneous position data where x ~= 0 and z ~= 0.
+            if abs(x - 0) >= 1e-6 and abs(z - 0) >= 1e-6:
+                positions[i] = [z, -x]
 
         positions = np.array(positions)
 
