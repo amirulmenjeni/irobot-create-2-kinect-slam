@@ -106,7 +106,8 @@ class Kinect:
 
         for i in range(len(users)):
 
-            x, y, z = users[i].centerOfMass
+            cmass = users[i].centerOfMass
+            x, y, z = cmass.x, cmass.y, cmass.z
             positions[i] = [z, -x]
 
         positions = np.array(positions)
@@ -157,15 +158,9 @@ if __name__ == '__main__':
             dmap = kin.get_depth()
             dimg = Kinect.depth_display(dmap)
 
-            print(dmap)
 
-            for user in kin.get_users():
-                print('id:', user.id)
-                # joint = user.skeleton.joints[Kinect.JOINT_TORSO]
-                # x, y, z = joint.position.x, joint.position.y, joint.position.z
-                x, y, z = user.centerOfMass.x, user.centerOfMass.y,\
-                    user.centerOfMass.z
-                print('user pos:', (x, y, z))
+            for upos in kin.get_users_pos():
+                print('wpos:', upos)
 
             cv2.imshow('Video', np.hstack((rgb, dimg)))
             cv2.waitKey(60)
