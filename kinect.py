@@ -137,6 +137,9 @@ class Kinect:
 
         world_xyz = [0] * self.depth_w
 
+        # Set erroneous value (max range) to 0.
+        depth_slice[depth_slice == Kinect.MAX_READING] = 0
+
         for u in range(self.depth_w):
             world_xyz[u] = openni2.convert_depth_to_world(\
                 self.depth_stream, u, 0, depth_slice[0][u])
