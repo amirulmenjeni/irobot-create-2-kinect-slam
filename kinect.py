@@ -102,7 +102,7 @@ class Kinect:
     def get_users_pos(self):
 
         users = self.get_users()
-        positions = [0] * len(users)
+        positions = []
 
         for i in range(len(users)):
 
@@ -111,7 +111,7 @@ class Kinect:
 
             # Ignore erroneous position data where x ~= 0 and z ~= 0.
             if abs(x - 0) >= 1e-6 and abs(z - 0) >= 1e-6:
-                positions[i] = [z, -x]
+                positions.append([z, -x])
 
         positions = np.array(positions)
 
