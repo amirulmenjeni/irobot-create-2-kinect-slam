@@ -652,14 +652,14 @@ def entropy_map(m):
 
     return vec_cell_entropy(m)
 
-def nearest_unexplored_cell(m, robot_cell, unexplored_thres=0.95):
+def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.95):
 
     """
     @param m: The entropy map.
     """
-
-    X = np.argwhere(m>0.95)
-    boundary = [rutil.euclidean_distance(x, robot_cell) > 6 for x in X]
+    
+    X = np.argwhere(m > unexplored_thres)
+    boundary = [rutil.euclidean_distance(x, robot_cell) > min_dist for x in X]
     X = X[boundary]
     nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
     dist, inds = nbrs.kneighbors([robot_cell])
@@ -1043,6 +1043,8 @@ def shortest_path(start, goal, grid_map, occu_thres):
     """
 
     goal = tuple(goal)
+
+    assert grid_map[goal[0], goal[1]] < occu_thres
 
     print('start:', start, 'goal:', goal)
 
