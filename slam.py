@@ -446,8 +446,9 @@ def is_out_of_bound(cell, map_size):
 def remove_outbound_cells(cells, map_size):
 
     inbound = np.argwhere(\
-        np.logical_and(0 <= cells[:,0] < map_size[0],\
-                       0 <= cells[:,1] < map_size[1]))
+            (0 <= cells[:, 0]) & (cells[:, 0] < map_size[0]) &\
+            (0 <= cells[:, 1]) & (cells[:, 1] < map_size[1])\
+        )
 
     return cells[inbound]
 
