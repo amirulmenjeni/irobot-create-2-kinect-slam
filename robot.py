@@ -414,6 +414,7 @@ class Robot:
         self.u_t = None
         self.z_t = None
         self.goal_cell = None
+        self.nearest_human = None
 
         ###################################################
         # Speak.
@@ -916,6 +917,7 @@ class Robot:
             ##################################################
             lbump, rbump = self.get_sensor(PKT_BUMP)
             nearest_human = self.get_nearest_human()
+            self.nearest_human = nearest_human
 
             ##################################################
             # Update fastSLAM particles when u_t is not static and when we have
@@ -931,12 +933,20 @@ class Robot:
             # Determine state based on whether we found a human, bumped into an
             # obstacle, or want to explore.
             ##################################################
+
+            # State transitions:
+
             if self.motion_state == MOTION_STATIC:
                 self.motion_state = MOTION_EXPLORE
 
-            if nearest_human is not None:
-                self.motion_state = MOTION_APPROACH
-            
+            elif self.motion_state == MOTION_EXPLORE:
+                if nearest_human is not None:
+                    self.motion_state = MOTION_APPROACH
+
+            elif self.motion_state == MOTION_APPROACH:
+                if nearest_human is None:
+                    self.motion_state = MOTION_STATIC
+
             if lbump or rbump:
                 self.motion_state = MOTION_ESCAPE
 
@@ -985,8 +995,14 @@ class Robot:
                 goal_pos = slam.cell_to_world_pos(goal_cell,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-                if rutil.is_in_circle(goal_pos,\
-                    config.GRID_MAP_RESOLUTION / 2, self.get_pose()[:2]):
+                radius_error = config.GRID_MAP_RESOLUTION / 2
+
+                # Stop at a larger distance away from target when approaching.
+                if self.motion_state == MOTION_APPROACH:
+                    radius_error = 50 # cm
+
+                if rutil.is_in_circle(goal_pos, radius_error,\
+                        self.get_pose()[:2]):
 
                     self.test_song()
 
@@ -1014,8 +1030,12 @@ class Robot:
                 if escaped_distance < 10:
                     self.drive_velocity(-config.ESCAPE_OBSTACLE_SPEED, 0)
                 else:
+                    escaped_distance = 0
                     self.drive_velocity(0, 0)
                     self.motion_state = MOTION_STATIC
+
+            elif self.motion_state == MOTION_STATIC:
+                self.drive_velocity(0, 0)
 
             prev_state = self.motion_state
 
@@ -1028,6 +1048,9 @@ class Robot:
                 delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
             except TypeError:
                 pass
+
+            if self.motion_state == MOTION_ESCAPE:
+                escaped_distance += delta_distance
 
             self.__delta_distance = delta_distance
             self.__delta_angle = math.radians(delta_angle)
@@ -1559,7 +1582,7 @@ class Robot:
 
         assert 0 <= thres <= 1.0
 
-        X = np.argwhere(self.hum_grid_map < (1.0 - thres))
+        X = np.argwhere(self.hum_grid_map > thres)
 
         if len(X) == 0:
             return None
