@@ -843,6 +843,7 @@ class Robot:
 
             best_particle = self.fast_slam.highest_particle()
 
+            cells_human = []
             if len(xy_humans) > 0:
 
                 H = rutil.rigid_trans_mat3(best_particle.x)
