@@ -607,13 +607,15 @@ def update_occupancy_grid_map(m, obs_mat):
 
 def update_human_grid_map(m, present_cells, present=1.2, absent=-0.7):
 
-    rows, cols = present_cells.T
+    if len(present_cells) > 0:
+        rows, cols = present_cells.T
 
     tmp = rutil.vec_prob_to_log_odds(m) + absent
     m[:,:] = rutil.vec_log_odds_to_prob(tmp) 
 
-    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present - absent
-    m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+    if len(present_cells) > 0:
+        tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present - absent
+        m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
 def human_cell_pos(m, pos, thres=0.85):
 

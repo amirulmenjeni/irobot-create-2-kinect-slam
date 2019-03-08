@@ -853,7 +853,8 @@ class Robot:
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
                 cells_human = slam.remove_outbound_cells(\
                     cells_human, config.GRID_MAP_SIZE)
-                slam.update_human_grid_map(self.hum_grid_map, cells_human)
+                if len(cells_human) > 0:
+                    slam.update_human_grid_map(self.hum_grid_map, cells_human)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
