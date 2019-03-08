@@ -23,7 +23,7 @@ class Kinect:
     JOINT_LEFT_FOOT = 13
     JOINT_RIGHT_FOOT = 14
 
-    MAX_READING = 2**12 - 1
+    MAX_RANGE = 2**12 - 1
 
     def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640)):
 
@@ -81,7 +81,7 @@ class Kinect:
         dmap = np.fromstring(data, dtype=np.uint16).reshape(480, 640)
 
         # No reading set to max depth.
-        dmap[abs(dmap - 0) < 1e-6] = Kinect.MAX_READING
+        dmap[abs(dmap - 0) < 1e-6] = Kinect.MAX_RANGE
 
         return dmap
 
@@ -124,7 +124,7 @@ class Kinect:
 
     def depth_display(depth_map):
 
-        d = np.uint8(depth_map.astype(float) * 255 / Kinect.MAX_READING)
+        d = np.uint8(depth_map.astype(float) * 255 / Kinect.MAX_RANGE)
         d = 255 - cv2.cvtColor(d, cv2.COLOR_GRAY2RGB)
         return d
 
@@ -138,7 +138,7 @@ class Kinect:
         world_xyz = [0] * self.depth_w
 
         # Set erroneous value (max range) to 0.
-        depth_slice[depth_slice == Kinect.MAX_READING] = 0
+        depth_slice[depth_slice == Kinect.MAX_RANGE] = 0
 
         for u in range(self.depth_w):
             world_xyz[u] = openni2.convert_depth_to_world(\
