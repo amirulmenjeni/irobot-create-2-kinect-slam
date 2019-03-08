@@ -415,6 +415,11 @@ class Robot:
         self.goal_cell = None
 
         ###################################################
+        # Speak.
+        ###################################################
+        playsound(config.SND_INIT)
+
+        ###################################################
         # Initialize all threads.
         ###################################################
         self.__init_threads()
@@ -882,6 +887,7 @@ class Robot:
         self.motion_state = MOTION_STATIC
         self.is_autonomous = True
 
+        prev_state = -1
         next_cell = None
         goal_cell = None
         escaped_distance = 0
@@ -902,9 +908,10 @@ class Robot:
             self.get_sensor(PKT_MOTION)
 
             ##################################################
-            # Check bump sensors.
+            # Check percepts.
             ##################################################
             lbump, rbump = self.get_sensor(PKT_BUMP)
+            nearest_human = self.get_nearest_human()
 
             ##################################################
             # Update fastSLAM particles when u_t is not static and when we have
@@ -921,17 +928,24 @@ class Robot:
             # obstacle, or want to explore.
             ##################################################
             if self.motion_state == MOTION_STATIC:
+                self.motion_state = MOTION_EXPLORE
 
-                nearest_human = self.get_nearest_human()
-
-                if nearest_human:
-                    self.motion_state = MOTION_APPROACH
-
-                else:
-                    self.motion_state = MOTION_EXPLORE
-
+            if nearest_human is not None:
+                self.motion_state = MOTION_APPROACH
+            
             if lbump or rbump:
                 self.motion_state = MOTION_ESCAPE
+
+            ##################################################
+            # On state change...
+            ##################################################
+            if self.motion_state != prev_state:
+                if self.motion_state == MOTION_EXPLORE:
+                    playsound(config.SND_EXPLORE)
+                elif self.motion_state == MOTION_APPROACH:
+                    playsound(config.SND_APPROACH)
+                elif self.motion_state == MOTION_ESCAPE:
+                    playsound(config.SND_OOPS)
 
             ##################################################
             # Goal update. For MOTION_EXPLORE, the goal cell is set only once.
@@ -940,7 +954,7 @@ class Robot:
             ##################################################
             if self.motion_state == MOTION_APPROACH:
                 nearest_human = self.get_nearest_human()
-                if nearest_human:
+                if nearest_human is not None:
                     goal_cell = slam.world_to_cell_pos(nearest_human,\
                         config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
@@ -998,6 +1012,8 @@ class Robot:
                 else:
                     self.drive_velocity(0, 0)
                     self.motion_state = MOTION_STATIC
+
+            prev_state = self.motion_state
 
             ##################################################
             # Record change in distance and angle for this iteration.
@@ -1550,7 +1566,7 @@ class Robot:
         X = np.argwhere(self.hum_grid_map < (1.0 - thres))
 
         if len(X) == 0:
-            return False
+            return None
 
         nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
         dist, inds = nbrs.kneighbors([self.get_cell_pos()])

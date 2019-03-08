@@ -34,5 +34,9 @@ GRID_MAP_SIZE = (300, 300)
 ##################################################
 # SOUNDS
 ##################################################
+SND_INIT = PROJECT_PATH + './resource/voice/m4_init.wav'
 SND_GREET = PROJECT_PATH + './resource/voice/m4_greet.wav'
+SND_APPROACH = PROJECT_PATH + './resource/voice/m4_approach_guest.wav'
+SND_EXPLORE = PROJECT_PATH + './resource/voice/m4_explore.wav'
 SND_SEE_HUMAN = PROJECT_PATH + './resource/voice/m4_see_human.wav'
+SND_OOPS = PROJECT_PATH + './resource/voice/m4_oops.wav'
