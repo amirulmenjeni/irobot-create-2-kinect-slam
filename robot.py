@@ -335,9 +335,10 @@ class Robot:
         if port == '':
             try:
                 port = self.ports_lookup()[0]
-                print('Found port:', port)
+                logging.info('Found port: {0}'.format(port))
             except:
-                sys.exit('ERROR: No USB serial port found.')
+                logging.error('No USB serial port found.')
+                sys.exit(-1)
 
         self.__b = b
         self.__port = port
@@ -425,13 +426,15 @@ class Robot:
         self.__init_threads()
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
+        logging.info('Battery percentage on startup: {0}'.format(\
+            self.battery_charge() * 100))
 
     def __init_local_map(self, iterations=30):
 
         local_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
         # Initialize the map for fastSLAM.
-        print('Initializing fastSLAM map...')
+        logging.info('Initializing FastSLAM map.')
         for _ in range(iterations):
 
             depth_map = self.kin.get_depth()
@@ -447,7 +450,7 @@ class Robot:
             slam.update_occupancy_grid_map(local_map, obs_mat)
 
             time.sleep(1.0 / self.kin.get_depth_fps())
-        print('Done.')
+        logging.info('Finished initializing FastSLAM map.')
 
         return local_map
 
@@ -488,10 +491,11 @@ class Robot:
 
         for thread in self.threads:
             if thread.is_alive():
-                print('Thread %s has already started.' % thread.name)
+                logging.info('Thread {0} is started before initialization.'\
+                    .format(thread.name))
             else:
                 thread.start()
-                print('Thread "%s" started' % thread.name)
+                logging.info('Thread {0} has started.'.format(thread.name))
 
             time.sleep(0.1)
 
@@ -530,8 +534,6 @@ class Robot:
         Deprecated. I think using send_codes is sufficient. For now.
         """
 
-#         print('message:', opcode + byte_data)
-#         print('len    :', len(opcode + byte_data))
         successful = False
         while not successful:
             try:
@@ -551,7 +553,7 @@ class Robot:
         try:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
-            print('Error: send_code(code) error')
+            logging.error('Error sending code {0}: {1}'.format(code, e))
 
     def send_codes(self, codes):
 
@@ -866,6 +868,8 @@ class Robot:
             cells_human = []
             if len(xy_humans) > 0:
 
+                logging.info('Human position(s) found: {0}'.format(xy_humans))
+
                 H = rutil.rigid_trans_mat3(best_particle.x)
 
                 cells_human = slam.world_frame_to_cell_pos(xy_humans,\
@@ -1105,15 +1109,8 @@ class Robot:
                 self.goal_cell = slam.nearest_unexplored_cell(\
                     slam.entropy_map(grid_map), robot_cell)
 
-                print('goal cell:', self.goal_cell)
-
-                # print('solution from {0} to {1}:'.format(robot_cell,
-                #     self.goal_cell))
-
                 follow_path = slam.shortest_path(robot_cell, self.goal_cell,
                         grid_map, 0.75)
-
-                # print('follow_path:', follow_path)
 
                 self.motion_state = MOTION_FOLLOW
 
@@ -1152,7 +1149,6 @@ class Robot:
                     follow_index = 0
                     self.motion_state = MOTION_EXPLORE
                     escape_timestep = 0
-                    print('done escaping..')
                 escape_timestep += 1
 
             elif self.motion_state == MOTION_STATIC:
