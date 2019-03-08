@@ -99,6 +99,20 @@ class Kinect:
 
         return users
 
+    def get_users_pos(self):
+
+        users = self.get_users()
+        positions = [0] * len(users)
+
+        for i in range(len(users)):
+
+            x, y, z = users[i].centerOfMass
+            positions[i] = [z, -x]
+
+        positions = np.array(positions)
+
+        return positions
+
     def depth_display(depth_map):
 
         d = np.uint8(depth_map.astype(float) * 255 / Kinect.MAX_READING)
