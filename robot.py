@@ -895,6 +895,7 @@ class Robot:
         self.is_autonomous = True
 
         prev_state = -1
+        nearest_human = None
         next_cell = None
         goal_cell = None
         escaped_distance = 0
@@ -905,8 +906,6 @@ class Robot:
 
             robot_cell = self.get_cell_pos()
             best_particle = self.fast_slam.highest_particle()
-            grid_map = best_particle.m
-            grid_map = rutil.morph_map(grid_map)
 
             ##################################################
             # Start odometry measurement for this iteration.
@@ -915,11 +914,12 @@ class Robot:
             self.get_sensor(PKT_MOTION)
 
             ##################################################
-            # Check percepts.
+            # Check percepts and belief.
             ##################################################
             lbump, rbump = self.get_sensor(PKT_BUMP)
             nearest_human = self.get_nearest_human()
-            self.nearest_human = nearest_human
+            grid_map = best_particle.m
+            grid_map = rutil.morph_map(grid_map)
 
             ##################################################
             # Update fastSLAM particles when u_t is not static and when we have
@@ -973,16 +973,16 @@ class Robot:
             # each timestep due to potential moving target.
             ##################################################
             if self.motion_state == MOTION_APPROACH:
-                nearest_human = self.get_nearest_human()
-                if nearest_human is not None:
-                    goal_cell = slam.world_to_cell_pos(nearest_human,\
-                        config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                goal_cell = slam.world_to_cell_pos(nearest_human,\
+                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
             elif self.motion_state == MOTION_EXPLORE:
                 if goal_cell is None:
                     goal_cell = slam.nearest_unexplored_cell(\
                         slam.entropy_map(grid_map),\
                         robot_cell)
+            else:
+                goal_cell = None
             self.goal_cell = goal_cell
 
             ##################################################
@@ -1021,7 +1021,6 @@ class Robot:
                         playsound(config.SND_GREET)
 
                     # Set goal and next cell back to None to be reset later.
-                    self.goal_cell = None
                     goal_cell = None
                     next_cell = None
 
@@ -1040,13 +1039,14 @@ class Robot:
                         goal_cell = None
 
             elif self.motion_state == MOTION_ESCAPE:
-
                 self.drive_velocity(-config.ESCAPE_OBSTACLE_SPEED, 0)
 
             elif self.motion_state == MOTION_STATIC:
                 self.drive_velocity(0, 0)
 
             prev_state = self.motion_state
+
+            self.nearest_human = nearest_human
 
             ##################################################
             # Record change in distance and angle for this iteration.
