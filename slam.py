@@ -605,7 +605,7 @@ def update_occupancy_grid_map(m, obs_mat):
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
-def update_human_grid_map(m, present_cells, present=1.2, absent=-0.7):
+def update_human_grid_map(m, present_cells, present=0.9, absent=-0.5):
 
     if len(present_cells) > 0:
         rows, cols = present_cells.T
@@ -1045,8 +1045,6 @@ def shortest_path(start, goal, grid_map, occu_thres):
     goal = tuple(goal)
 
     assert grid_map[goal[0], goal[1]] < occu_thres
-
-    print('start:', start, 'goal:', goal)
 
     STEP_COST = 1
 
