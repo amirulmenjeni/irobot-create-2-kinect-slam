@@ -113,7 +113,7 @@ class Kinect:
             if abs(x - 0) >= 1e-6 and abs(z - 0) >= 1e-6:
                 positions.append([z, -x])
 
-        positions = np.array(positions)
+        positions = np.array(positions) * 0.1
 
         return positions
 
