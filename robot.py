@@ -869,6 +869,8 @@ class Robot:
             cells_human = []
             if len(xy_humans) > 0:
 
+                print('xy_humans:', xy_humans)
+
                 logging.info('Human position(s) found: {0}'.format(xy_humans))
 
                 H = rutil.rigid_trans_mat3(best_particle.x)
@@ -1013,7 +1015,10 @@ class Robot:
                 if rutil.is_in_circle(goal_pos, radius_error,\
                         self.get_pose()[:2]):
 
-                    self.test_song()
+                    if self.motion_state == MOTION_EXPLORE:
+                        self.test_song()
+                    elif self.motion_state == MOTION_APPROACH:
+                        playsound(config.SND_GREET)
 
                     # Set goal and next cell back to None to be reset later.
                     self.goal_cell = None
