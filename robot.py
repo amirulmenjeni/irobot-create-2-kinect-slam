@@ -914,17 +914,15 @@ class Robot:
             self.get_sensor(PKT_MOTION)
 
             ##################################################
-            # Check percepts and belief.
+            # Percept and belief update sequence.
             ##################################################
             lbump, rbump = self.get_sensor(PKT_BUMP)
             nearest_human = self.get_nearest_human()
             grid_map = best_particle.m
             grid_map = rutil.morph_map(grid_map)
 
-            ##################################################
             # Update fastSLAM particles when u_t is not static and when we have
             # observation z_t.
-            ##################################################
             if self.z_t is not None and self.u_t is not None and\
                 np.sum(self.u_t) != 0:
                 self.fast_slam.update(self.z_t, self.u_t)
@@ -932,6 +930,8 @@ class Robot:
                 self.u_t = None
 
             ##################################################
+            # State transition sequence.
+            # 
             # Determine state based on whether we found a human, bumped into an
             # obstacle, or want to explore.
             ##################################################
@@ -956,9 +956,7 @@ class Robot:
             if lbump or rbump:
                 self.motion_state = MOTION_ESCAPE
 
-            ##################################################
             # On state change...
-            ##################################################
             if self.motion_state != prev_state:
                 if self.motion_state == MOTION_EXPLORE:
                     playsound(config.SND_EXPLORE)
@@ -968,9 +966,11 @@ class Robot:
                     playsound(config.SND_OOPS)
 
             ##################################################
-            # Goal update. For MOTION_EXPLORE, the goal cell is set only once.
-            # However, for MOTION_APPROACH, the goal cell need to be updated in
-            # each timestep due to potential moving target.
+            # Goal update sequence.
+            #
+            # For MOTION_EXPLORE, the goal cell is set only once.  However, for
+            # MOTION_APPROACH, the goal cell need to be updated in each timestep
+            # due to potential moving target.
             ##################################################
             if self.motion_state == MOTION_APPROACH:
                 goal_cell = slam.world_to_cell_pos(nearest_human,\
@@ -986,8 +986,10 @@ class Robot:
             self.goal_cell = goal_cell
 
             ##################################################
-            # Planning: MOTION_EXPLORE and MOTION_APPROACH both
-            # update their plan during each timestep (online planning).
+            # Plan update sequence.
+            #
+            # MOTION_EXPLORE and MOTION_APPROACH both update their plan during
+            # each timestep (online planning).
             ##################################################
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
                 try:
@@ -999,7 +1001,9 @@ class Robot:
                     pass
 
             ##################################################
-            # Control execution.
+            # Control update sequence.
+            #
+            # Execute control based on the current state and current goal.
             ##################################################
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
 
