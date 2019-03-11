@@ -327,6 +327,8 @@ class Robot:
             The maximum speed each wheel can attain in cm/s.
         """
 
+        logging.basicConfig(level=logging.DEBUG)
+
         # Serial variables.
         self.baudrate=57600
 
@@ -891,7 +893,7 @@ class Robot:
     def thread_motion4(self):
 
         delta_time = config.CONTROL_DELTA_TIME
-        occu_thres = 0.51
+        occu_thres = config.OCCU_THRES
 
         self.motion_state = MOTION_STATIC
         self.is_autonomous = True
@@ -908,6 +910,8 @@ class Robot:
             robot_cell = self.get_cell_pos()
             best_particle = self.fast_slam.highest_particle()
 
+            best_particle.m[robot_cell[0], robot_cell[1]] = 0.25
+
             ##################################################
             # Start odometry measurement for this iteration.
             ##################################################
@@ -920,7 +924,6 @@ class Robot:
             lbump, rbump = self.get_sensor(PKT_BUMP)
             nearest_human = self.get_nearest_human()
             grid_map = best_particle.m
-            grid_map = rutil.morph_map(grid_map)
 
             # Update fastSLAM particles when u_t is not static and when we have
             # observation z_t.
@@ -931,7 +934,7 @@ class Robot:
                 self.u_t = None
 
             ##################################################
-            # State transition sequence.
+             #State transition sequence.
             # 
             # Determine state based on whether we found a human, bumped into an
             # obstacle, or want to explore.
@@ -978,13 +981,29 @@ class Robot:
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
             elif self.motion_state == MOTION_EXPLORE:
+
                 if goal_cell is None:
-                    goal_cell = slam.nearest_unexplored_cell(\
-                        slam.entropy_map(grid_map),\
-                        robot_cell)
+
+                    goal_cell = slam.explore_cell(\
+                        slam.entropy_map(grid_map), robot_cell)
+
+                    # If goal cell is not reachable, this means that we have
+                    # explored the whole explorable area (so far). We simply
+                    # choose an explored cell in this case.
+                    sol = slam.shortest_path(robot_cell, goal_cell,\
+                        grid_map, occu_thres, config.BODY_KERNEL_RADIUS)
+
+                    if len(sol) == 0:
+                        goal_cell = slam.explore_cell(\
+                            slam.entropy_map(grid_map), robot_cell,\
+                            entropy_thres=0)
+
             else:
                 goal_cell = None
             self.goal_cell = goal_cell
+
+            # print('robot_cell:', robot_cell)
+            # print('goal_cell:', goal_cell)
 
             ##################################################
             # Plan update sequence.
@@ -1015,9 +1034,10 @@ class Robot:
 
                 try:
                     next_cell = solution[0]
-                except IndexError:
+                except IndexError as e:
                     # This happens when there's no next cell available
                     # (we're quite close to the solution).
+                    print('next cell error:', e)
                     pass
 
                 self.current_solution = solution
@@ -1161,7 +1181,7 @@ class Robot:
 
             if self.motion_state == MOTION_EXPLORE:
 
-                self.goal_cell = slam.nearest_unexplored_cell(\
+                self.goal_cell = slam.explore_cell(\
                     slam.entropy_map(grid_map), robot_cell)
 
                 follow_path = slam.shortest_path(robot_cell, self.goal_cell,
