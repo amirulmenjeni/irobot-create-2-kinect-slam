@@ -904,6 +904,8 @@ class Robot:
         nearest_human = None
         next_cell = None
         goal_cell = None
+        cell_steps = 3
+        cutoff = 300
 
         while 1:
 
@@ -992,12 +994,10 @@ class Robot:
                     # If goal cell is not reachable, this means that we have
                     # explored the whole explorable area (so far). We simply
                     # choose an explored cell in this case.
-                    # print('Search A')
                     sol = slam.shortest_path(robot_cell, goal_cell,\
                         grid_map, occu_thres,\
-                        cut_off_f=100,\
+                        cut_off_f=cutoff,\
                         kernel_radius=config.BODY_KERNEL_RADIUS)
-                    # print('Done A')
 
                     if len(sol) == 0:
                         goal_cell = slam.explore_cell(\
@@ -1014,38 +1014,45 @@ class Robot:
             ##################################################
             # Plan update sequence.
             #
-            # MOTION_EXPLORE and MOTION_APPROACH both update their plan during
-            # each timestep (online planning).
+            # MOTION_EXPLORE and MOTION_APPROACH both update their plan after
+            # each action is performed (i.e., after moving to the next cell).
             ##################################################
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
 
                 # Decide whether we should compute the next cell: Have we
                 # arrived to the next cell?
                 if next_cell is None:
-                    # print('Search B')
                     solution = slam.shortest_path(robot_cell,\
                         goal_cell, grid_map, occu_thres,\
-                        cut_off_f=100,\
+                        cut_off_f=cutoff,\
                         kernel_radius=config.BODY_KERNEL_RADIUS)
-                    # print('Done B')
                 else:
 
-                    next_pos = slam.cell_to_world_pos(next_cell,\
-                        config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                    # Update next cell.
+                    if slam.goal_test(robot_cell, next_cell,
+                            config.BODY_KERNEL_RADIUS):
 
-                    if rutil.is_in_circle(next_pos,\
-                            config.GRID_MAP_RESOLUTION / 2,\
-                            best_particle.x[:2]):
+                        next_pos = slam.cell_to_world_pos(next_cell,\
+                            config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-                        # print('Search C')
-                        solution = slam.shortest_path(robot_cell,\
-                            goal_cell, grid_map, occu_thres,\
-                            cut_off_f=100,\
-                            kernel_radius=config.BODY_KERNEL_RADIUS)
-                        # print('Done C')
+                        if rutil.is_in_circle(next_pos,\
+                                config.GRID_MAP_RESOLUTION / 2,\
+                                best_particle.x[:2]):
+
+                            solution = slam.shortest_path(robot_cell,\
+                                goal_cell, grid_map, occu_thres,\
+                                cut_off_f=cutoff,\
+                                kernel_radius=config.BODY_KERNEL_RADIUS)
+
+                    # Keep next_cell the same.
+                    else:
+                        solution = [next_cell]
 
                 try:
-                    next_cell = solution[0]
+                    if cell_steps - 1 < len(solution):
+                        next_cell = solution[cell_steps - 1]
+                    else:
+                        next_cell = solution[-1]
                 except IndexError as e:
                     # This happens when there's no next cell available
                     # (we're quite close to the solution), or when there's no
