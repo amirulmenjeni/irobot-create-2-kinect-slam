@@ -399,7 +399,7 @@ class Robot:
 
         self.camera_image = None
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
-        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
+        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.0)
 
         local_map = self.__init_local_map()
 
@@ -419,7 +419,7 @@ class Robot:
         ###################################################
         # Speak.
         ###################################################
-        playsound(config.SND_INIT)
+        # playsound(config.SND_INIT)
 
         ###################################################
         # Initialize all threads.
@@ -898,7 +898,6 @@ class Robot:
         nearest_human = None
         next_cell = None
         goal_cell = None
-        escaped_distance = 0
 
         while 1:
 
@@ -994,7 +993,7 @@ class Robot:
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
                 try:
                     next_cell = slam.shortest_path(robot_cell, goal_cell,\
-                        grid_map, 0.75)[0]
+                        grid_map, 0.75, config.BODY_KERNEL_RADIUS)[0]
                 except IndexError:
                     # This happens when there's no more next cell to go to
                     # (i.e., we're quite close to the goal cell).
