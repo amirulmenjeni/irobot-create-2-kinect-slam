@@ -675,6 +675,26 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
+def explore_cell(m, robot_cell, min_dist=6, k=100, tol=1e-3, entropy_thres=0.95):
+
+    assert k >= 1
+    assert type(k) == int
+    assert min_dist >= 0
+    assert tol > 0
+
+    # Find unexplored cell above some entropy threshold. If entropy_thres is
+    # less than or equal to 0, then find some explored cell instead.
+    if entropy_thres > 0:
+        X = np.argwhere((abs(m - np.max(m)) < tol) & (m > entropy_thres))
+    else:
+        X = np.argwhere(m < 0.5)
+
+    boundary = [rutil.euclidean_distance(x, robot_cell) > min_dist for x in X]
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X)
+    dist, inds = nbrs.kneighbors([robot_cell])
+
+    return X[inds.flatten()[np.random.randint(0, k)]]
+
 def local_occupancy(cell_dict, out, map_size, resolution):
 
     OCCU = 0.9
@@ -1036,8 +1056,7 @@ def is_colliding(cell, grid_map, occu_thres, kernel_radius):
 
     for i in range(row - kernel_radius, row + kernel_radius + 1):
         for j in range(col - kernel_radius, col + kernel_radius + 1):
-            logging.info('{0}: grid_map[{1}, {2}]: {3}'.format(\
-                cell, i, j, grid_map[i, j]))
+
             if grid_map[i, j] >= occu_thres:
                 return True
     return False
@@ -1053,7 +1072,7 @@ def path_cost(cell, grid_map, occu_thres, kernel_radius):
             if grid_map[i, j] >= occu_thres:
                 count += 1
 
-    return count
+    return count / ((kernel_radius + 1) ** 2)
 
 def __heapsort(iterable):
     
@@ -1102,7 +1121,7 @@ def shortest_path(start, goal, grid_map, occu_thres, kernel_radius=1):
     
     # Path-cost function.
     g = lambda n : n.parent.g_cost +\
-            path_cost(n.label, grid_map, occu_thres, kernel_radius)
+        path_cost(n.label, grid_map, occu_thres, kernel_radius)
 
     explored_set = {}
     frontier_set = {}
