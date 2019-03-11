@@ -184,8 +184,9 @@ def prob_to_log_odds(p):
     Convert the probability value p to its log odds notation.
     """
 
-    if p == 1.0:
-        p = 0.9999999
+    # Avoid undefined ln(0) value.
+    if p < 1e-10:
+        p = 1e-10
 
     return math.log(p / (1.0 - p))
 
