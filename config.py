@@ -31,6 +31,10 @@ PF_NUM_PARTICLES = 150
 GRID_MAP_RESOLUTION = 10.0
 GRID_MAP_SIZE = (300, 300)
 
+# Kernel defining the shape representation of the robot projected on the grid
+# map.
+BODY_KERNEL_RADIUS = 5
+
 ##################################################
 # SOUNDS
 ##################################################
