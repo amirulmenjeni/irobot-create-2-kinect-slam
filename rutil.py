@@ -188,6 +188,10 @@ def prob_to_log_odds(p):
     if p < 1e-10:
         p = 1e-10
 
+    # Avoid division by 0.
+    if abs(1.0 - p) < 1e-6:
+        p = 0.999999
+
     return math.log(p / (1.0 - p))
 
 def manhattan_distance(a, b):
