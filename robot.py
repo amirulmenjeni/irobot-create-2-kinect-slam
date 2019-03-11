@@ -891,6 +891,7 @@ class Robot:
     def thread_motion4(self):
 
         delta_time = config.CONTROL_DELTA_TIME
+        occu_thres = 0.51
 
         self.motion_state = MOTION_STATIC
         self.is_autonomous = True
@@ -997,7 +998,7 @@ class Robot:
                 # arrived to the next cell?
                 if next_cell is None:
                     solution = slam.shortest_path(robot_cell,\
-                        goal_cell, grid_map, 0.85,\
+                        goal_cell, grid_map, occu_thres,\
                         config.BODY_KERNEL_RADIUS)
                 else:
 
@@ -1006,10 +1007,10 @@ class Robot:
 
                     if rutil.is_in_circle(next_pos,\
                             config.GRID_MAP_RESOLUTION / 2,\
-                            self.get_pose()[:2]):
+                            best_particle.x[:2]):
 
                         solution = slam.shortest_path(robot_cell,\
-                            goal_cell, grid_map, 0.85,\
+                            goal_cell, grid_map, occu_thres,\
                             config.BODY_KERNEL_RADIUS)
 
                 try:
@@ -1038,7 +1039,7 @@ class Robot:
                     radius_error = 50 # cm
 
                 if rutil.is_in_circle(goal_pos, radius_error,\
-                        self.get_pose()[:2]):
+                        best_particle.x[:2]):
 
                     if self.motion_state == MOTION_EXPLORE:
                         self.test_song()
@@ -1649,7 +1650,9 @@ class Robot:
 
     def get_cell_pos(self):
 
-        return slam.world_to_cell_pos(self.get_pose()[:2],\
+        best_particle = self.fast_slam.highest_particle()
+
+        return slam.world_to_cell_pos(best_particle.x[:2],\
             config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
     def kinect_xy(self, detect_human=True):
