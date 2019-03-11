@@ -1013,7 +1013,7 @@ def random_explore_cell(pose, grid_map, free_thres, min_radius, max_radius, res)
 
     return random.choice(free_cells)
 
-def neighbor_cells(cell, grid_map, occu_thres):
+def neighbor_cells(cell, grid_map, occu_thres, kernel_radius):
 
     row, col = cell
     for i in range(-1, 2):
@@ -1024,9 +1024,20 @@ def neighbor_cells(cell, grid_map, occu_thres):
 
             neighbor = (row + i, col + j)
 
-            if not is_out_of_bound(neighbor, grid_map.shape) and\
-               grid_map[row + i, col + j] < occu_thres:
+            if not (is_out_of_bound(neighbor, grid_map.shape) or\
+                is_colliding((i, j), grid_map, occu_thres, kernel_radius)):
+
                 yield neighbor
+
+def is_colliding(cell, grid_map, occu_thres, kernel_radius):
+
+    row, col = cell
+
+    for i in range(row - kernel_radius, row + kernel_radius + 1):
+        for j in range(col - kernel_radius, col + kernel_radius + 1):
+            if grid_map[i, j] >= occu_thres:
+                return True
+    return False
 
 def __heapsort(iterable):
     
@@ -1043,16 +1054,31 @@ def __replace_greater(queue, node):
 
     return __heapsort(queue)
 
-def shortest_path(start, goal, grid_map, occu_thres):
+def shortest_path(start, goal, grid_map, occu_thres, kernel_radius=1):
 
     """
     A* algorithm to find shortest-path from the starting cell to the goal cell
     on the given grid map.
+
+    @param start:
+        The starting cell.
+    @param goal:
+        The goal cell.
+    @param grid_map:
+        The occupancy grid map representing the occupancy probability of each
+        cell on the map.
+    @occ_thres:
+        The threshold occupancy value, the minimum probability value of a cell
+        to be labeled as occupied.
     """
 
     goal = tuple(goal)
+    kernel_radius = np.array(kernel_radius)
 
     assert grid_map[goal[0], goal[1]] < occu_thres
+    assert kernel_radius > 0
+
+    kernel_radius = int(kernel_radius)
 
     STEP_COST = 1
 
@@ -1093,7 +1119,8 @@ def shortest_path(start, goal, grid_map, occu_thres):
 
         explored_set[node.label] = True
 
-        for neighbor in neighbor_cells(node.label, grid_map, occu_thres):
+        for neighbor in neighbor_cells(node.label, grid_map, occu_thres,\
+                kernel_radius):
 
             child_node = Node(neighbor)
             child_node.parent = node
