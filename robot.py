@@ -415,6 +415,7 @@ class Robot:
         self.z_t = None
         self.goal_cell = None
         self.nearest_human = None
+        self.current_solution = []
 
         ###################################################
         # Speak.
@@ -991,13 +992,34 @@ class Robot:
             # each timestep (online planning).
             ##################################################
             if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
+
+                # Decide whether we should compute the next cell: Have we
+                # arrived to the next cell?
+                if next_cell is None:
+                    solution = slam.shortest_path(robot_cell,\
+                        goal_cell, grid_map, 0.85,\
+                        config.BODY_KERNEL_RADIUS)
+                else:
+
+                    next_pos = slam.cell_to_world_pos(next_cell,\
+                        config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+                    if rutil.is_in_circle(next_pos,\
+                            config.GRID_MAP_RESOLUTION / 2,\
+                            self.get_pose()[:2]):
+
+                        solution = slam.shortest_path(robot_cell,\
+                            goal_cell, grid_map, 0.85,\
+                            config.BODY_KERNEL_RADIUS)
+
                 try:
-                    next_cell = slam.shortest_path(robot_cell, goal_cell,\
-                        grid_map, 0.75, config.BODY_KERNEL_RADIUS)[0]
+                    next_cell = solution[0]
                 except IndexError:
-                    # This happens when there's no more next cell to go to
-                    # (i.e., we're quite close to the goal cell).
+                    # This happens when there's no next cell available
+                    # (we're quite close to the solution).
                     pass
+
+                self.current_solution = solution
 
             ##################################################
             # Control update sequence.
