@@ -8,6 +8,7 @@ import rutil
 import scipy.stats as st
 import random
 import heapq
+import logging
 from data_structures import Node
 from icp import icp
 from sklearn.neighbors import NearestNeighbors
@@ -233,7 +234,7 @@ class FastSLAM:
             z_cells = z_mat[:,:2]
 
             # Prediction step: State transition of each particle.
-            noise = (1e-3, 1e-3, 1e-3, 1e-3)
+            noise = (1e-6, 1e-6, 1e-6, 1e-6)
             p.x = sample_motion_model_odometry(u_t, p.x, noise=noise)
 
             H = rutil.rigid_trans_mat3(p.x)
@@ -242,7 +243,7 @@ class FastSLAM:
 
             # Correction step: Compute the weight of this particle.
             p.w = likelihood_field_measurement_model(z_cells, p.x,\
-                    np.argwhere(p.m > 0.75), self.MAP_SIZE, self.RESOLUTION)
+                    np.argwhere(p.m > 0.90), self.MAP_SIZE, self.RESOLUTION)
 
             if p.w > max_weight:
                 max_weight = p.w
@@ -654,7 +655,7 @@ def entropy_map(m):
 
     return vec_cell_entropy(m)
 
-def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.95,\
+def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
     k=100):
 
     """
@@ -1024,8 +1025,8 @@ def neighbor_cells(cell, grid_map, occu_thres, kernel_radius):
 
             neighbor = (row + i, col + j)
 
-            if not (is_out_of_bound(neighbor, grid_map.shape) or\
-                is_colliding((i, j), grid_map, occu_thres, kernel_radius)):
+            if not is_out_of_bound(neighbor, grid_map.shape) and\
+               not is_colliding(neighbor, grid_map, occu_thres, kernel_radius):
 
                 yield neighbor
 
@@ -1035,9 +1036,24 @@ def is_colliding(cell, grid_map, occu_thres, kernel_radius):
 
     for i in range(row - kernel_radius, row + kernel_radius + 1):
         for j in range(col - kernel_radius, col + kernel_radius + 1):
+            logging.info('{0}: grid_map[{1}, {2}]: {3}'.format(\
+                cell, i, j, grid_map[i, j]))
             if grid_map[i, j] >= occu_thres:
                 return True
     return False
+
+def path_cost(cell, grid_map, occu_thres, kernel_radius):
+
+    row, col = cell
+    count = 1
+
+    for i in range(row - kernel_radius, row + kernel_radius + 1):
+        for j in range(col - kernel_radius, col + kernel_radius + 1):
+
+            if grid_map[i, j] >= occu_thres:
+                count += 1
+
+    return count
 
 def __heapsort(iterable):
     
@@ -1080,14 +1096,13 @@ def shortest_path(start, goal, grid_map, occu_thres, kernel_radius=1):
 
     kernel_radius = int(kernel_radius)
 
-    STEP_COST = 1
-
     # Heuristic function.
     # h = lambda n : np.sum(np.abs(np.array(n.label) - np.array(goal)))
     h = lambda n: rutil.euclidean_distance(n.label, goal)
     
     # Path-cost function.
-    g = lambda n : n.parent.g_cost + STEP_COST
+    g = lambda n : n.parent.g_cost +\
+            path_cost(n.label, grid_map, occu_thres, kernel_radius)
 
     explored_set = {}
     frontier_set = {}
