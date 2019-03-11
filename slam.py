@@ -654,19 +654,25 @@ def entropy_map(m):
 
     return vec_cell_entropy(m)
 
-def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.95):
+def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.95,\
+    k=100):
 
     """
     @param m: The entropy map.
     """
+
+    assert k >= 1
+    assert type(k) == int
+    assert min_dist >= 0
+    assert 0 <= unexplored_thres <= 1
     
     X = np.argwhere(m > unexplored_thres)
     boundary = [rutil.euclidean_distance(x, robot_cell) > min_dist for x in X]
     X = X[boundary]
-    nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X)
     dist, inds = nbrs.kneighbors([robot_cell])
 
-    return X[inds.flatten()[0]]
+    return X[inds.flatten()[np.random.randint(0, k)]]
 
 def local_occupancy(cell_dict, out, map_size, resolution):
 
