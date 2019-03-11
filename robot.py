@@ -327,7 +327,9 @@ class Robot:
             The maximum speed each wheel can attain in cm/s.
         """
 
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(filename='stuff.log', level=logging.DEBUG)
+
+        logging.info('Initializing...')
 
         # Serial variables.
         self.baudrate=57600
@@ -990,8 +992,12 @@ class Robot:
                     # If goal cell is not reachable, this means that we have
                     # explored the whole explorable area (so far). We simply
                     # choose an explored cell in this case.
+                    # print('Search A')
                     sol = slam.shortest_path(robot_cell, goal_cell,\
-                        grid_map, occu_thres, config.BODY_KERNEL_RADIUS)
+                        grid_map, occu_thres,\
+                        cut_off_f=100,\
+                        kernel_radius=config.BODY_KERNEL_RADIUS)
+                    # print('Done A')
 
                     if len(sol) == 0:
                         goal_cell = slam.explore_cell(\
@@ -1016,9 +1022,12 @@ class Robot:
                 # Decide whether we should compute the next cell: Have we
                 # arrived to the next cell?
                 if next_cell is None:
+                    # print('Search B')
                     solution = slam.shortest_path(robot_cell,\
                         goal_cell, grid_map, occu_thres,\
-                        config.BODY_KERNEL_RADIUS)
+                        cut_off_f=100,\
+                        kernel_radius=config.BODY_KERNEL_RADIUS)
+                    # print('Done B')
                 else:
 
                     next_pos = slam.cell_to_world_pos(next_cell,\
@@ -1028,16 +1037,22 @@ class Robot:
                             config.GRID_MAP_RESOLUTION / 2,\
                             best_particle.x[:2]):
 
+                        # print('Search C')
                         solution = slam.shortest_path(robot_cell,\
                             goal_cell, grid_map, occu_thres,\
-                            config.BODY_KERNEL_RADIUS)
+                            cut_off_f=100,\
+                            kernel_radius=config.BODY_KERNEL_RADIUS)
+                        # print('Done C')
 
                 try:
                     next_cell = solution[0]
                 except IndexError as e:
                     # This happens when there's no next cell available
-                    # (we're quite close to the solution).
+                    # (we're quite close to the solution), or when there's no
+                    # solution to the selected goal.
                     print('next cell error:', e)
+                    next_cell = None # Flag to skip the next control update seq.
+                    goal_cell = None # Flag to generate new goal cell.
                     pass
 
                 self.current_solution = solution
@@ -1047,12 +1062,13 @@ class Robot:
             #
             # Execute control based on the current state and current goal.
             ##################################################
-            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
+            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH] and\
+                    next_cell is not None:
 
                 goal_pos = slam.cell_to_world_pos(goal_cell,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-                radius_error = config.GRID_MAP_RESOLUTION / 2
+                radius_error = 15 # cm
 
                 # Stop at a larger distance away from target when approaching.
                 if self.motion_state == MOTION_APPROACH:

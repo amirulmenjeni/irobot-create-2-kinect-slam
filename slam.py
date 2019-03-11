@@ -1072,7 +1072,19 @@ def path_cost(cell, grid_map, occu_thres, kernel_radius):
             if grid_map[i, j] >= occu_thres:
                 count += 1
 
-    return count / ((kernel_radius + 1) ** 2)
+    return (count / ((kernel_radius + 1) ** 2)) + 1
+
+def goal_test(cell, goal, kernel_radius):
+
+    row, col = cell
+
+    for i in range(row - kernel_radius, row + kernel_radius + 1):
+        for j in range(col - kernel_radius, col + kernel_radius + 1):
+
+            if goal == (i, j):
+                return True
+
+    return False
 
 def __heapsort(iterable):
     
@@ -1089,7 +1101,8 @@ def __replace_greater(queue, node):
 
     return __heapsort(queue)
 
-def shortest_path(start, goal, grid_map, occu_thres, kernel_radius=1):
+def shortest_path(start, goal, grid_map, occu_thres, cut_off_f=0,\
+        kernel_radius=1):
 
     """
     A* algorithm to find shortest-path from the starting cell to the goal cell
@@ -1145,13 +1158,18 @@ def shortest_path(start, goal, grid_map, occu_thres, kernel_radius=1):
             del frontier_set[node.label]
 
         # Goal-test.
-        if node.label == goal:
+        if goal_test(node.label, goal, kernel_radius):
             while node.parent is not None:
                 solution.append(node.label)
                 node = node.parent
             return solution[::-1]
 
         explored_set[node.label] = True
+
+        # Cut off the branch of this node when the cut-off threshold is met.
+        if cut_off_f > 0:
+            if node.g_cost + node.h_cost > cut_off_f:
+                return []
 
         for neighbor in neighbor_cells(node.label, grid_map, occu_thres,\
                 kernel_radius):
