@@ -876,8 +876,6 @@ class Robot:
 
                 print('xy_humans:', xy_humans)
 
-                logging.info('Human position(s) found: {0}'.format(xy_humans))
-
                 H = rutil.rigid_trans_mat3(best_particle.x)
 
                 cells_human = slam.world_frame_to_cell_pos(xy_humans,\
@@ -905,7 +903,7 @@ class Robot:
         next_cell = None
         goal_cell = None
         cell_steps = 3
-        cutoff = 300
+        cutoff = 100
 
         while 1:
 
@@ -927,6 +925,8 @@ class Robot:
             ##################################################
             lbump, rbump = self.get_sensor(PKT_BUMP)
             nearest_human = self.get_nearest_human()
+            self.nearest_human = nearest_human
+            print('nearest_human:', nearest_human)
             grid_map = best_particle.m
 
             # Update fastSLAM particles when u_t is not static and when we have
@@ -938,7 +938,7 @@ class Robot:
                 self.u_t = None
 
             ##################################################
-             #State transition sequence.
+            # State transition sequence.
             # 
             # Determine state based on whether we found a human, bumped into an
             # obstacle, or want to explore.
@@ -973,6 +973,8 @@ class Robot:
                 elif self.motion_state == MOTION_ESCAPE:
                     playsound(config.SND_OOPS)
 
+            prev_state = self.motion_state
+
             ##################################################
             # Goal update sequence.
             #
@@ -981,8 +983,7 @@ class Robot:
             # due to potential moving target.
             ##################################################
             if self.motion_state == MOTION_APPROACH:
-                goal_cell = slam.world_to_cell_pos(nearest_human,\
-                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+                goal_cell = nearest_human
 
             elif self.motion_state == MOTION_EXPLORE:
 
@@ -1113,9 +1114,6 @@ class Robot:
             elif self.motion_state == MOTION_STATIC:
                 self.drive_velocity(0, 0)
 
-            prev_state = self.motion_state
-
-            self.nearest_human = nearest_human
 
             ##################################################
             # Record change in distance and angle for this iteration.
@@ -1653,11 +1651,9 @@ class Robot:
 
         return self.interpret_code(packet_id, self.recv_code(packet_id))
 
-    def get_nearest_human(self, thres=0.75):
+    def get_nearest_human(self):
 
-        assert 0 <= thres <= 1.0
-
-        X = np.argwhere(self.hum_grid_map > thres)
+        X = np.argwhere(self.hum_grid_map > 0)
 
         if len(X) == 0:
             return None
