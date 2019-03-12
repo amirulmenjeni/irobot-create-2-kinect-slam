@@ -675,7 +675,7 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=15, k=100, tol=1e-3, entropy_thres=0.95):
+def explore_cell(m, robot_cell, min_dist=10, k=100, tol=1e-3, entropy_thres=0.95):
 
     assert k >= 1
     assert type(k) == int
@@ -690,6 +690,7 @@ def explore_cell(m, robot_cell, min_dist=15, k=100, tol=1e-3, entropy_thres=0.95
         X = np.argwhere(m < 0.5)
 
     boundary = [rutil.euclidean_distance(x, robot_cell) > min_dist for x in X]
+    X = X[boundary]
     nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X)
     dist, inds = nbrs.kneighbors([robot_cell])
 
