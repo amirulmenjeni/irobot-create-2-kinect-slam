@@ -606,7 +606,7 @@ def update_occupancy_grid_map(m, obs_mat):
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
-def update_human_grid_map(m, present_cells, present=0.9, absent=-0.5):
+def update_human_grid_map(m, present_cells, present=1.2, absent=-0.25):
 
     prev_present_cells = np.argwhere(m > 0)
 
@@ -617,7 +617,7 @@ def update_human_grid_map(m, present_cells, present=0.9, absent=-0.5):
 
     if len(present_cells) > 0:
         rows, cols = present_cells.T
-        tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present - absent
+        tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present
         m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
 def human_cell_pos(m, pos, thres=0.85):
@@ -675,7 +675,7 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=6, k=100, tol=1e-3, entropy_thres=0.95):
+def explore_cell(m, robot_cell, min_dist=15, k=100, tol=1e-3, entropy_thres=0.95):
 
     assert k >= 1
     assert type(k) == int
@@ -1101,8 +1101,8 @@ def __replace_greater(queue, node):
 
     return __heapsort(queue)
 
-def shortest_path(start, goal, grid_map, occu_thres, cut_off_f=0,\
-        kernel_radius=1):
+def shortest_path(start, goal, grid_map, occu_thres,
+        kernel_radius=1, epsilon=4):
 
     """
     A* algorithm to find shortest-path from the starting cell to the goal cell
@@ -1123,7 +1123,6 @@ def shortest_path(start, goal, grid_map, occu_thres, cut_off_f=0,\
     goal = tuple(goal)
     kernel_radius = np.array(kernel_radius)
 
-    assert grid_map[goal[0], goal[1]] < occu_thres
     assert kernel_radius > 0
 
     kernel_radius = int(kernel_radius)
@@ -1136,17 +1135,28 @@ def shortest_path(start, goal, grid_map, occu_thres, cut_off_f=0,\
     g = lambda n : n.parent.g_cost +\
         path_cost(n.label, grid_map, occu_thres, kernel_radius)
 
+    # Dynamic weight function.
+    N = max(grid_map.shape)
+    w = lambda n: (1 + epsilon)  - (epsilon * n.depth) / N
+
     explored_set = {}
     frontier_set = {}
 
     node = Node(start)
+    node.depth = 0
     node.g_cost = 0
     node.h_cost = h(node)
+    node.h_weight = w(node)
     frontiers = []
     heapq.heappush(frontiers, node)
     frontier_set[node.label] = True
 
     solution = []
+
+
+    # No solution for a goal cell which may cause collision.
+    if is_colliding(goal, grid_map, occu_thres, kernel_radius):
+        return []
 
     while 1:
 
@@ -1166,18 +1176,22 @@ def shortest_path(start, goal, grid_map, occu_thres, cut_off_f=0,\
 
         explored_set[node.label] = True
 
-        # Cut off the branch of this node when the cut-off threshold is met.
-        if cut_off_f > 0:
-            if node.g_cost + node.h_cost > cut_off_f:
-                return []
-
         for neighbor in neighbor_cells(node.label, grid_map, occu_thres,\
                 kernel_radius):
 
             child_node = Node(neighbor)
             child_node.parent = node
+            child_node.depth = node.depth + 1
             child_node.g_cost = g(child_node)
             child_node.h_cost = h(child_node)
+
+            if epsilon > 0:
+                if child_node.depth < N:
+                    child_node.h_weight = w(child_node)
+                else:
+                    child_node.h_weight = 0
+            else:
+                child_node.h_weight = 1
 
             if neighbor not in explored_set and\
                neighbor not in frontier_set:
