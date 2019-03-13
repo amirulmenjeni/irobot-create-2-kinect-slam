@@ -59,7 +59,12 @@ def explore(beh, robot):
         grid_map = best_particle.m
         entr_map = slam.entropy_map(grid_map)
 
-        grid_map[robot_cell] = 0.5
+        # We're quite sure that since the robot is at position (ru, rv),
+        # there's no obstacles around here.
+        ru, rv = robot_cell
+        for i in range(rv - KERNEL_RADIUS, rv + KERNEL_RADIUS + 1):
+            for j in range(ru - KERNEL_RADIUS, ru + KERNEL_RADIUS + 1):
+                grid_map[i, j] = 0.25
 
         if (next_cell is None) or (goal_cell is None):
             goal_cell, solution = robot.plan_explore(KERNEL_RADIUS)
