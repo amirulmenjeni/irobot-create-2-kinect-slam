@@ -9,6 +9,7 @@ import config
 import slam
 import math
 import numpy as np
+from bbr import Timer
 from playsound import playsound
 from enum import Enum, auto
 
@@ -118,13 +119,14 @@ def escape_obstacle(beh, robot):
     robot_cell = robot.get_cell_pos()
     prev_cell = robot_cell
 
+    timer = Timer()
+
     while True:
 
         if beh.is_interrupted():
             break
 
-        robot_cell = robot.get_cell_pos()
-        if robot_cell != prev_cell:
+        if timer.timeup(2):
             robot.drive_velocity(0, 0)
             break
 
