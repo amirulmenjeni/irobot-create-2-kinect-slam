@@ -333,8 +333,7 @@ class Robot:
 
         logging.basicConfig(filename='stuff.log', level=logging.DEBUG)
 
-        self.sensor_get_count = 0
-        self.command_send_count = 0
+        self.cmd_semaphore = threading.Semaphore(value=1)
 
         ##################################################
         # Initialize connection.
@@ -576,17 +575,11 @@ class Robot:
         the iRobot, you may pass chr(128).
         """
 
-        while self.command_send_count > 0:
-            pass
-
-        self.command_send_count += 1
-
         try:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
             logging.error('Error sending code {0}: {1}'.format(code, e))
 
-        self.command_send_count -= 1
 
     def send_codes(self, codes):
 
@@ -595,8 +588,12 @@ class Robot:
         See send_code.
         """
 
+        self.cmd_semaphore.acquire()
+
         for c in codes:
            self.send_code(c)
+
+        self.cmd_semaphore.release()
 
     def recv_code(self, packet_id):
 
