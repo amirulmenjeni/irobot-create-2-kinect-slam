@@ -333,7 +333,8 @@ class Robot:
 
         logging.basicConfig(filename='stuff.log', level=logging.DEBUG)
 
-        self.cmd_semaphore = threading.Semaphore(value=1)
+        self.cmd_snd_semaphore = threading.Semaphore(value=1)
+        self.cmd_rcv_semaphore = threading.Semaphore(value=1)
 
         ##################################################
         # Initialize connection.
@@ -580,7 +581,6 @@ class Robot:
         except serial.SerialException as e:
             logging.error('Error sending code {0}: {1}'.format(code, e))
 
-
     def send_codes(self, codes):
 
         """
@@ -588,12 +588,12 @@ class Robot:
         See send_code.
         """
 
-        self.cmd_semaphore.acquire()
+        self.cmd_snd_semaphore.acquire()
 
         for c in codes:
            self.send_code(c)
 
-        self.cmd_semaphore.release()
+        self.cmd_snd_semaphore.release()
 
     def recv_code(self, packet_id):
 
@@ -604,7 +604,12 @@ class Robot:
 
         codes = [SENSORS, packet_id]
         self.send_codes(codes)
+
+        self.cmd_rcv_semaphore.acquire()
+
         read_buf = self.ser.read(PKT_BYTES[packet_id])
+
+        self.cmd_rcv_semaphore.release()
 
         return read_buf
 
@@ -1473,15 +1478,15 @@ class Robot:
                 # Sensor readings.
                 nearest_human = self.get_nearest_human()
 
-                # try:
-                #     lbump, rbump = self.get_sensor(PKT_BUMP)
-                #     if lbump or rbump:
-                #         self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
-                # except TypeError:
-                #     # Unable to unpack sensor data: Error in getting the sensor
-                #     # value.
-                #     print('Error getting PKT_BUMP')
-                #     pass
+                try:
+                    lbump, rbump = self.get_sensor(PKT_BUMP)
+                    print('bump:', lbump, rbump)
+                    if lbump or rbump:
+                        self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
+                except TypeError:
+                    # Unable to unpack sensor data: Error in getting the sensor
+                    # value.
+                    print('Error getting PKT_BUMP')
 
                 if len(nearest_human) > 0:
                     pass
