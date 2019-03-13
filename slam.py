@@ -360,6 +360,17 @@ def world_frame_to_cell_pos(frame, map_size, resolution):
 
     return cell_pos[:,::-1].astype(int) # to row, column
 
+def fill_area(m, cell, radius, value, out=None):
+
+    m = np.copy(m)
+    v, u = cell
+    for i in range(v - radius, v + radius + 1):
+        for j in range(u - radius, u + radius + 1):
+            m[i, j] = value
+            if out is not None:
+                out[i, j]
+    return m
+
 def observed_cells(pos, end_pt_cells):
 
     """
