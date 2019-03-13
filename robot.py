@@ -14,6 +14,9 @@ import slam
 import rutil
 import config
 import logging
+import imdraw_util as imdraw
+from behavior_defn import beh_def_list, Beh
+from bbr import Arbiter, Behavior
 from kinect import Kinect
 import freenect
 from openni import openni2
@@ -52,6 +55,7 @@ PKT_BYTES[PKT_ANGLE]    = 2
 # Threads
 THREAD_MOTION = 0
 THREAD_KINECT = 1
+THREAD_MAIN = 2
 
 MOTION_STATIC = 0
 MOTION_EXPLORE = 1
@@ -307,7 +311,7 @@ class StaticPlotter:
 
         plt.grid()
         plt.show()
-    
+
 class Robot:
 
     def __init__(self, b=26, port='', max_speed=10,
@@ -329,7 +333,12 @@ class Robot:
 
         logging.basicConfig(filename='stuff.log', level=logging.DEBUG)
 
-        logging.info('Initializing...')
+        self.sensor_get_count = 0
+        self.command_send_count = 0
+
+        ##################################################
+        # Initialize connection.
+        ##################################################
 
         # Serial variables.
         self.baudrate=57600
@@ -350,6 +359,7 @@ class Robot:
 
         # Run start command.
         self.start()
+        self.full_mode()
 
         # Store issued command variables.
         self.issued_v = 0
@@ -422,6 +432,14 @@ class Robot:
         self.current_solution = []
 
         ###################################################
+        # Behavior based robotic.
+        ###################################################
+        self.arbiter = Arbiter(self)
+        self.behaviors = {}
+        for name, priority, func in beh_def_list:
+            self.behaviors[name] = Behavior(name, self.arbiter, priority, func)
+
+        ###################################################
         # Speak.
         ###################################################
         # playsound(config.SND_INIT)
@@ -429,7 +447,7 @@ class Robot:
         ###################################################
         # Initialize all threads.
         ###################################################
-        self.__init_threads()
+        # self.__init_threads()
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
         logging.info('Battery percentage on startup: {0}'.format(\
@@ -485,10 +503,12 @@ class Robot:
         """
 
         self.threads = [
-                threading.Thread(target=Robot.thread_motion4, args=(self,),\
+                threading.Thread(target=Robot.thread_motion5, args=(self,),\
                 name='Motion'),\
                 threading.Thread(target=Robot.thread_kinect, args=(self,),\
                 name='Kinect'),\
+                # threading.Thread(target=Robot.thread_main, args=(self,),\
+                # name='Main')
         ]
 
         # A list of flag to maintain thread stop request
@@ -556,10 +576,17 @@ class Robot:
         the iRobot, you may pass chr(128).
         """
 
+        while self.command_send_count > 0:
+            pass
+
+        self.command_send_count += 1
+
         try:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
             logging.error('Error sending code {0}: {1}'.format(code, e))
+
+        self.command_send_count -= 1
 
     def send_codes(self, codes):
 
@@ -890,12 +917,80 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
 
+    def thread_main(self):
+
+        time.sleep(3)
+
+        while True:
+
+            # Sensor readings.
+            nearest_human = self.get_nearest_human()
+
+            # try:
+            #     lbump, rbump = self.get_sensor(PKT_BUMP)
+            #     if lbump or rbump:
+            #         self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
+            # except TypeError:
+            #     # Unable to unpack sensor data: Error in getting the sensor
+            #     # value.
+            #     print('Error getting PKT_BUMP')
+            #     pass
+
+            if len(nearest_human) > 0:
+                pass
+
+            self.behaviors[Beh.EXPLORE].send_request()
+
+            time.sleep(0.1)
+
+            if self.is_thread_stop_requested[THREAD_MAIN]:
+                break
+
+    def thread_motion5(self):
+
+        while True:
+
+            tstart = time.time()
+
+            delta_distance, delta_angle = 0, 0
+            self.get_sensor(PKT_MOTION)
+
+            # Update fastSLAM particles when u_t is not static and when we have
+            # observation z_t.
+            if self.z_t is not None and self.u_t is not None and\
+                    (np.abs(self.u_t) > 1e-6).any():
+
+                self.fast_slam.update(self.z_t, self.u_t)
+                self.z_t = None
+                self.u_t = None
+
+            dt = time.time() - tstart
+            time.sleep(max(config.CONTROL_DELTA_TIME, dt))
+
+            try:
+                delta_distance, delta_angle = self.get_sensor(PKT_MOTION)
+            except TypeError:
+                print('Error getting PKT_MOTION')
+                pass
+
+            self.__delta_distance = delta_distance
+            self.__delta_angle = math.radians(delta_angle)
+
+            # Use the odometry measurement as the "control".
+            self.u_t = [delta_distance, self.__delta_angle]
+
+            self.__update_odometry(delta_distance, self.__delta_angle)
+
+            if self.is_thread_stop_requested[THREAD_MOTION]:
+                break
+
     def thread_motion4(self):
 
         delta_time = config.CONTROL_DELTA_TIME
         occu_thres = config.OCCU_THRES
+        kernel_radius = config.BODY_KERNEL_RADIUS
 
-        self.motion_state = MOTION_STATIC
+        self.motion_state = MOTION_EXPLORE
         self.is_autonomous = True
 
         prev_state = -1
@@ -903,7 +998,6 @@ class Robot:
         next_cell = None
         goal_cell = None
         cell_steps = 3
-        cutoff = 100
 
         while 1:
 
@@ -927,7 +1021,11 @@ class Robot:
             nearest_human = self.get_nearest_human()
             self.nearest_human = nearest_human
             print('nearest_human:', nearest_human)
+
             grid_map = best_particle.m
+
+            # Remove human obstacle from grid map.
+            grid_map = np.clip(grid_map - self.hum_grid_map, 0, 1)
 
             # Update fastSLAM particles when u_t is not static and when we have
             # observation z_t.
@@ -946,18 +1044,39 @@ class Robot:
 
             # State transitions:
 
-            if self.motion_state == MOTION_STATIC:
+            solution = []
+
+            # Is a human detected?
+            if nearest_human is not None:
+
+                # Is the detected human approachable?
+                solution = slam.shortest_path(robot_cell, nearest_human,
+                        grid_map, occu_thres, kernel_radius=kernel_radius)
+
+                if len(solution) > 0:
+                    self.motion_state = MOTION_APPROACH
+                    goal_cell = nearest_human
+                else:
+                    goal_cell, solution = Robot.get_explore_cell(robot_cell,\
+                            grid_map, occu_thres, kernel_radius)
+
+            # No human detected, we explore.
+            else:
+
+                if goal_cell is None:
+                    goal_cell, solution = Robot.get_explore_cell(robot_cell,\
+                        grid_map, occu_thres, kernel_radius)
+
                 self.motion_state = MOTION_EXPLORE
 
-            elif self.motion_state == MOTION_EXPLORE:
-                if nearest_human is not None:
-                    self.motion_state = MOTION_APPROACH
+            # Determine the next cell to go to.
+            if self.motion_state in [MOTION_EXPLORE, MOTION_ESCAPE]:
+                if cell_steps - 1 < len(solution):
+                    next_cell = solution[cell_steps - 1]
+                else:
+                    next_cell = solution[-1]
 
-            elif self.motion_state == MOTION_APPROACH:
-                if nearest_human is None:
-                    self.motion_state = MOTION_STATIC
-
-            elif self.motion_state == MOTION_ESCAPE:
+            if self.motion_state == MOTION_ESCAPE:
                 if not (lbump and rbump):
                     self.motion_state = MOTION_EXPLORE
 
@@ -976,111 +1095,20 @@ class Robot:
             prev_state = self.motion_state
 
             ##################################################
-            # Goal update sequence.
-            #
-            # For MOTION_EXPLORE, the goal cell is set only once.  However, for
-            # MOTION_APPROACH, the goal cell need to be updated in each timestep
-            # due to potential moving target.
-            ##################################################
-            if self.motion_state == MOTION_APPROACH:
-                goal_cell = nearest_human
-
-            elif self.motion_state == MOTION_EXPLORE:
-
-                if goal_cell is None:
-
-                    goal_cell = slam.explore_cell(\
-                        slam.entropy_map(grid_map), robot_cell)
-
-                    # If goal cell is not reachable, this means that we have
-                    # explored the whole explorable area (so far). We simply
-                    # choose an explored cell in this case.
-                    sol = slam.shortest_path(robot_cell, goal_cell,\
-                        grid_map, occu_thres,\
-                        cut_off_f=cutoff,\
-                        kernel_radius=config.BODY_KERNEL_RADIUS)
-
-                    if len(sol) == 0:
-                        goal_cell = slam.explore_cell(\
-                            slam.entropy_map(grid_map), robot_cell,\
-                            entropy_thres=0)
-
-            else:
-                goal_cell = None
-            self.goal_cell = goal_cell
-
-            # print('robot_cell:', robot_cell)
-            # print('goal_cell:', goal_cell)
-
-            ##################################################
-            # Plan update sequence.
-            #
-            # MOTION_EXPLORE and MOTION_APPROACH both update their plan after
-            # each action is performed (i.e., after moving to the next cell).
-            ##################################################
-            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
-
-                # Decide whether we should compute the next cell: Have we
-                # arrived to the next cell?
-                if next_cell is None:
-                    solution = slam.shortest_path(robot_cell,\
-                        goal_cell, grid_map, occu_thres,\
-                        cut_off_f=cutoff,\
-                        kernel_radius=config.BODY_KERNEL_RADIUS)
-                else:
-
-                    # Update next cell.
-                    if slam.goal_test(robot_cell, next_cell,
-                            config.BODY_KERNEL_RADIUS):
-
-                        next_pos = slam.cell_to_world_pos(next_cell,\
-                            config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
-
-                        if rutil.is_in_circle(next_pos,\
-                                config.GRID_MAP_RESOLUTION / 2,\
-                                best_particle.x[:2]):
-
-                            solution = slam.shortest_path(robot_cell,\
-                                goal_cell, grid_map, occu_thres,\
-                                cut_off_f=cutoff,\
-                                kernel_radius=config.BODY_KERNEL_RADIUS)
-
-                    # Keep next_cell the same.
-                    else:
-                        solution = [next_cell]
-
-                try:
-                    if cell_steps - 1 < len(solution):
-                        next_cell = solution[cell_steps - 1]
-                    else:
-                        next_cell = solution[-1]
-                except IndexError as e:
-                    # This happens when there's no next cell available
-                    # (we're quite close to the solution), or when there's no
-                    # solution to the selected goal.
-                    print('next cell error:', e)
-                    next_cell = None # Flag to skip the next control update seq.
-                    goal_cell = None # Flag to generate new goal cell.
-                    pass
-
-                self.current_solution = solution
-
-            ##################################################
             # Control update sequence.
             #
             # Execute control based on the current state and current goal.
             ##################################################
-            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH] and\
-                    next_cell is not None:
+            if self.motion_state in [MOTION_EXPLORE, MOTION_APPROACH]:
 
                 goal_pos = slam.cell_to_world_pos(goal_cell,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-                radius_error = 15 # cm
-
                 # Stop at a larger distance away from target when approaching.
                 if self.motion_state == MOTION_APPROACH:
                     radius_error = 50 # cm
+                else:
+                    radius_error = 15 # cm
 
                 if rutil.is_in_circle(goal_pos, radius_error,\
                         best_particle.x[:2]):
@@ -1113,7 +1141,6 @@ class Robot:
 
             elif self.motion_state == MOTION_STATIC:
                 self.drive_velocity(0, 0)
-
 
             ##################################################
             # Record change in distance and angle for this iteration.
@@ -1437,6 +1464,85 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
 
+    def run(self, show_display=False):
+
+        self.__init_threads()
+
+        time.sleep(1)
+
+        try:
+            while True:
+
+                # Sensor readings.
+                nearest_human = self.get_nearest_human()
+
+                # try:
+                #     lbump, rbump = self.get_sensor(PKT_BUMP)
+                #     if lbump or rbump:
+                #         self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
+                # except TypeError:
+                #     # Unable to unpack sensor data: Error in getting the sensor
+                #     # value.
+                #     print('Error getting PKT_BUMP')
+                #     pass
+
+                if len(nearest_human) > 0:
+                    pass
+
+                self.behaviors[Beh.EXPLORE].send_request()
+
+                if show_display:
+
+                    best_particle = self.fast_slam.highest_particle()
+                    map_image = slam.d3_map(best_particle.m, invert=True)
+
+                    imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+                        best_particle.x, bgr=(0, 255, 0), radius=1,
+                        show_heading=True)
+
+                    if self.goal_cell is not None:
+                        imdraw.draw_vertical_line(map_image,\
+                                self.goal_cell[1], (0, 0, 255))
+                        imdraw.draw_horizontal_line(map_image,\
+                                self.goal_cell[0], (0, 0, 255))
+
+                    for cell in self.current_solution:
+                        imdraw.draw_square(map_image,
+                            config.GRID_MAP_RESOLUTION,
+                            cell, (255, 0, 0), width=1, pos_cell=True)
+
+                    cv2.imshow('Display', map_image)
+
+                cv2.waitKey(100)
+
+        except KeyboardInterrupt:
+
+            print('Cleaning up...')
+
+            self.drive_velocity(0, 0)
+            time.sleep(0.5)
+            self.clean_up()
+
+    def display(self):
+
+        best_particle = self.fast_slam.highest_particle()
+
+        map_image = slam.d3_map(best_particle.m, invert=True)
+
+        imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+                best_particle.x, bgr=(0, 255, 0), radius=2, show_heading=True)
+
+        if self.goal_cell is not None:
+
+            # Clearly show the goal cell.
+            imdraw.draw_vertical_line(map_image, self.goal_cell[1],\
+                    (0, 0, 255))
+            imdraw.draw_horizontal_line(map_image, self.goal_cell[0],\
+                    (0, 0, 255))
+
+        cv2.imshow('Display', map_image)
+        cv2.waitKey(60)
+
     def thread_motion(self):
 
         """
@@ -1641,6 +1747,11 @@ class Robot:
         charge, capacity = self.get_sensor(PKT_STATUS)
         return charge / capacity
 
+    def add_behavior(self, beh):
+
+        self.behaviors[b.get_name()] = b
+        print('Behavior', b.get_name(), 'added.')
+
     def get_sensor(self, packet_id):
 
         """
@@ -1656,7 +1767,7 @@ class Robot:
         X = np.argwhere(self.hum_grid_map > 0)
 
         if len(X) == 0:
-            return None
+            return []
 
         nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
         dist, inds = nbrs.kneighbors([self.get_cell_pos()])
@@ -1693,6 +1804,29 @@ class Robot:
 
         return slam.world_to_cell_pos(best_particle.x[:2],\
             config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+    def plan_explore(self, kernel_radius):
+
+        robot_cell = self.get_cell_pos()
+        occu_thres = config.OCCU_THRES
+
+        grid_map = self.fast_slam.highest_particle().m
+        entr_map = slam.entropy_map(grid_map)
+
+        goal_cell = slam.explore_cell(entr_map, robot_cell)
+
+        solution = slam.shortest_path(robot_cell, goal_cell,\
+            grid_map, occu_thres, kernel_radius=kernel_radius)
+
+        if len(solution) == 0:
+            # Set an explored cell as the goal cell.
+            goal_cell = slam.explore_cell(\
+                entr_map, robot_cell,\
+                entropy_thres=0)
+            solution = slam.shortest_path(robot_cell, goal_cell,\
+                grid_map, occu_thres, kernel_radius=kernel_radius)
+
+        return goal_cell, solution
 
     def kinect_xy(self, detect_human=True):
 

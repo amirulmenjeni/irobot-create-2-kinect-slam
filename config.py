@@ -25,15 +25,16 @@ ESCAPE_OBSTACLE_SPEED = 5
 ##################################################
 # SLAM
 ##################################################
-CONTROL_DELTA_TIME = 0.1
+CONTROL_DELTA_TIME = 0.25
 MEASURE_DELTA_TIME = 0
-PF_NUM_PARTICLES = 150
+PF_NUM_PARTICLES = 60
 GRID_MAP_RESOLUTION = 10.0
-GRID_MAP_SIZE = (300, 300)
+GRID_MAP_SIZE = (500, 500)
+OCCU_THRES = 0.90
 
 # Kernel defining the shape representation of the robot projected on the grid
 # map.
-BODY_KERNEL_RADIUS = 5
+BODY_KERNEL_RADIUS = 3
 
 ##################################################
 # SOUNDS

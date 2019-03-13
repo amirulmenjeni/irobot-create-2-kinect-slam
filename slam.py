@@ -1154,7 +1154,6 @@ def shortest_path(start, goal, grid_map, occu_thres,
 
     solution = []
 
-
     # No solution for a goal cell which may cause collision.
     if is_colliding(goal, grid_map, occu_thres, kernel_radius):
         return []
