@@ -234,7 +234,7 @@ class FastSLAM:
             z_cells = z_mat[:,:2]
 
             # Prediction step: State transition of each particle.
-            noise = (1e-6, 1e-6, 1e-6, 1e-6)
+            noise = (1e-3, 1e-3, 1e-3, 1e-3)
             p.x = sample_motion_model_odometry(u_t, p.x, noise=noise)
 
             H = rutil.rigid_trans_mat3(p.x)
@@ -617,19 +617,12 @@ def update_occupancy_grid_map(m, obs_mat):
     tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
     m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
-def update_human_grid_map(m, present_cells, present=1.2, absent=-0.25):
+def update_human_grid_map(m, obs_mat):
 
-    prev_present_cells = np.argwhere(m > 0)
+    rows, cols = obs_mat[:, 0].astype(int), obs_mat[:, 1].astype(int)
 
-    if len(prev_present_cells) > 0:
-        rows, cols = prev_present_cells.T
-        tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + absent
-        m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
-
-    if len(present_cells) > 0:
-        rows, cols = present_cells.T
-        tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + present
-        m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
+    m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
 def human_cell_pos(m, pos, thres=0.85):
 
