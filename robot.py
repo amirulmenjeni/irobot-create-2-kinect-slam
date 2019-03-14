@@ -413,7 +413,7 @@ class Robot:
 
         self.camera_image = None
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
-        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.0)
+        self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
         local_map = self.__init_local_map()
 
@@ -894,27 +894,42 @@ class Robot:
             depth_map = self.kin.get_depth()
             self.z_t = self.kin.depth_map_to_world(depth_map)
 
+            end_cells = slam.world_frame_to_cell_pos(self.z_t,\
+                config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+            mid = np.array(config.GRID_MAP_SIZE).astype(int) // 2
+            obs_dict = slam.observed_cells(mid, end_cells)
+
+            for cell in obs_dict.keys():
+                obs_dict[cell] = False
+
             # The x- and y-locations of humans using NiTE2 user tracker,
             # already converted to the robot's local frame.
             xy_humans = self.kin.get_users_pos()
 
             best_particle = self.fast_slam.highest_particle()
+            H = rutil.rigid_trans_mat3(best_particle.x)
 
             cells_human = []
             if len(xy_humans) > 0:
 
                 print('xy_humans:', xy_humans)
 
-                H = rutil.rigid_trans_mat3(best_particle.x)
-
                 cells_human = slam.world_frame_to_cell_pos(xy_humans,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
-                cells_human = rutil.transform_cells_2d(H, cells_human,\
-                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
-                cells_human = slam.remove_outbound_cells(\
-                    cells_human, config.GRID_MAP_SIZE)
 
-            slam.update_human_grid_map(self.hum_grid_map, cells_human)
+                print('cells_human:', cells_human)
+
+                for cell in cells_human:
+                    v, u = cell.astype(int)
+                    obs_dict[v, u] = True 
+
+            obs_mat = slam.observation_matrix(obs_dict, config.GRID_MAP_SIZE,
+                occu=10, free=-1)
+
+            obs_mat[:,0:2] = rutil.transform_cells_2d(H, obs_mat[:,0:2],
+                config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
+            slam.update_human_grid_map(self.hum_grid_map, obs_mat)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
@@ -1471,6 +1486,9 @@ class Robot:
         self.__init_threads()
 
         time.sleep(1)
+        
+        MAP_SIZE = config.GRID_MAP_SIZE
+        RESOLUTION = config.GRID_MAP_RESOLUTION
 
         try:
             while True:
@@ -1480,7 +1498,6 @@ class Robot:
 
                 try:
                     lbump, rbump = self.get_sensor(PKT_BUMP)
-                    print('bump:', lbump, rbump)
                     if lbump or rbump:
                         self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
                 except TypeError:
@@ -1488,8 +1505,8 @@ class Robot:
                     # value.
                     print('Error getting PKT_BUMP')
 
-                if len(nearest_human) > 0:
-                    pass
+                if nearest_human is not None:
+                    self.behaviors[Beh.APPROACH_HUMAN].send_request()
 
                 self.behaviors[Beh.EXPLORE].send_request()
 
@@ -1497,23 +1514,41 @@ class Robot:
 
                     best_particle = self.fast_slam.highest_particle()
                     map_image = slam.d3_map(best_particle.m, invert=True)
+                    hum_image = slam.d3_map(self.hum_grid_map, invert=True)
 
+                    # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
                         best_particle.x, bgr=(0, 255, 0), radius=1,
                         show_heading=True)
 
+                    # Draw global reference frame's vertical and horizontal
+                    # axis.
+                    imdraw.draw_vertical_line(map_image,\
+                                MAP_SIZE[1] // 2, (0, 0, 255))
+                    imdraw.draw_horizontal_line(map_image,\
+                                MAP_SIZE[0] // 2, (0, 0, 255))
+                    imdraw.draw_vertical_line(hum_image,\
+                                MAP_SIZE[1] // 2, (0, 0, 255))
+                    imdraw.draw_horizontal_line(hum_image,\
+                                MAP_SIZE[0] // 2, (0, 0, 255))
+
+
+                    if self.nearest_human is not None:
+                        imdraw.draw_square(map_image,
+                                RESOLUTION, self.nearest_human,
+                                (0, 0, 255), pos_cell=True)
+
                     if self.goal_cell is not None:
-                        imdraw.draw_vertical_line(map_image,\
-                                self.goal_cell[1], (0, 0, 255))
-                        imdraw.draw_horizontal_line(map_image,\
-                                self.goal_cell[0], (0, 0, 255))
+                        imdraw.draw_square(map_image,
+                                RESOLUTION, self.goal_cell,
+                                (255, 0, 0), pos_cell=True)
 
                     for cell in self.current_solution:
                         imdraw.draw_square(map_image,
-                            config.GRID_MAP_RESOLUTION,
+                            RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
 
-                    cv2.imshow('Display', map_image)
+                    cv2.imshow('Display', np.hstack((map_image, hum_image)))
 
                 cv2.waitKey(100)
 
@@ -1764,12 +1799,12 @@ class Robot:
 
         return self.interpret_code(packet_id, self.recv_code(packet_id))
 
-    def get_nearest_human(self):
+    def get_nearest_human(self, thres=0.75):
 
-        X = np.argwhere(self.hum_grid_map > 0)
+        X = np.argwhere(self.hum_grid_map > thres)
 
         if len(X) == 0:
-            return []
+            return None
 
         nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(X)
         dist, inds = nbrs.kneighbors([self.get_cell_pos()])
