@@ -15,19 +15,81 @@ from enum import Enum, auto
 
 def approach_human(beh, robot):
 
+    playsound(config.SND_APPROACH)
+
+    print('>> APPROACH-HUMAN')
+
     OCCU_THRES = config.OCCU_THRES
     KERNEL_RADIUS = config.BODY_KERNEL_RADIUS
     MAP_SIZE = config.GRID_MAP_SIZE
     RESOLUTION = config.GRID_MAP_RESOLUTION
+    SPEED = config.NORMAL_DRIVE_SPEED
+    DELTA_TIME = config.CONTROL_DELTA_TIME
 
-    best_particle = robot.fast_slam.best_particle
-    grid_map = best_particle.m
+    CELL_STEPS = 3
+    RADIUS_TOL = 50
 
-    robot_cell = robot.get_cell_pos()
+    goal_cell = None
+    next_cell = None
 
-    while 1:
+    while True:
 
-        pass
+        robot_cell = robot.get_cell_pos()
+        best_particle = robot.fast_slam.highest_particle()
+        grid_map = best_particle.m
+
+        if beh.is_interrupted():
+            print('INTERRUPTED')
+            break
+
+        nearest_human = robot.get_nearest_human()
+        if nearest_human is None:
+            print('NO MORE VISIBLE HUMAN.')
+            break
+        robot.nearest_human = nearest_human
+
+        grid_map = slam.fill_area(grid_map, nearest_human,
+            KERNEL_RADIUS + 1, 0.25)
+
+        # We're quite sure that since the robot is at position (ru, rv),
+        # there's no obstacles around here.
+        grid_map = slam.fill_area(grid_map, robot_cell, KERNEL_RADIUS, 0.25)
+
+        goal_cell = nearest_human
+        robot.goal_cell
+        solution = slam.shortest_path(robot_cell, goal_cell, grid_map,
+            OCCU_THRES, kernel_radius=KERNEL_RADIUS)
+        robot.current_solution = solution
+
+        try:
+            if CELL_STEPS - 1 < len(solution):
+                next_cell = solution[CELL_STEPS - 1]
+            else:
+                next_cell = solution[-1]
+        except IndexError:
+
+            print('APPROACH-HUMAN: Error getting next cell.')
+
+            slam.fill_area(robot.hum_grid_map, nearest_human, 5, 0,\
+                out=robot.hum_grid_map)
+
+            next_cell = None
+            continue
+
+        goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
+
+        if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
+            playsound(config.SND_GREET)
+            robot.goal_cell = None
+            return
+        else:
+            next_pos = slam.cell_to_world_pos(next_cell, MAP_SIZE, RESOLUTION)
+            turn_radius = robot.inverse_kinematic(next_pos)
+            robot.drive_radius(SPEED, turn_radius)
+
+        time.sleep(DELTA_TIME)
+
+    print('<< APPROACH-HUMAN')
 
 def explore(beh, robot):
 
@@ -84,23 +146,18 @@ def explore(beh, robot):
                 next_cell = solution[CELL_STEPS - 1]
             else:
                 next_cell = solution[-1]
-
         except IndexError:
-            print('Error getting next cell.')
+            print('EXPLORE: Error getting next cell.')
             next_cell = None
             continue
 
         if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
-            
             robot.test_song()
+            robot.goal_cell = None
             return
-
         else:
-
             next_pos = slam.cell_to_world_pos(next_cell, MAP_SIZE, RESOLUTION)
-
             turn_radius = robot.inverse_kinematic(next_pos)
-
             robot.drive_radius(SPEED, turn_radius)
 
         time.sleep(DELTA_TIME)
