@@ -924,7 +924,7 @@ class Robot:
                     obs_dict[v, u] = True 
 
             obs_mat = slam.observation_matrix(obs_dict, config.GRID_MAP_SIZE,
-                occu=10, free=-1)
+                occu=0.9, free=-0.7)
 
             obs_mat[:,0:2] = rutil.transform_cells_2d(H, obs_mat[:,0:2],
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
