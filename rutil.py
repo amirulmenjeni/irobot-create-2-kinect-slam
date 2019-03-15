@@ -169,6 +169,21 @@ def disp_to_angle(disp):
 
     return a
 
+def angle_error(vec_from, vec_to):
+
+    # Angle magnitude.
+    h_err = angle_between_vectors(vec_from, vec_to)
+
+    # Angle direction.
+    cross_prod = np.cross(vec_from, vec_to)
+    angle_dir = 0
+    if cross_prod > 0:
+        angle_dir = 1 # Counterclockwise.
+    elif cross_prod < 0:
+        angle_dir = -1 # Clockwise.
+
+    return h_err * angle_dir
+
 def log_odds_to_prob(k):
 
     """

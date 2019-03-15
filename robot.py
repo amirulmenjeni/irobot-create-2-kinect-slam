@@ -392,7 +392,7 @@ class Robot:
 
         self.plotter = StaticPlotter(
             3, # Plot 3 lines for each graph.
-            [self.get_pose()[:2]] * 3,
+            [self.get_odom_pose()[:2]] * 3,
             ['kx-', 'cx--', 'g^--'],
             {0: '111',
              1: '111',
@@ -2005,7 +2005,7 @@ class Robot:
 
         return v - b * w, v + b * w
 
-    def inverse_kinematic(self, next_pos):
+    def inverse_drive_kinematic(self, next_pos):
 
         curr_pose = self.get_slam_pose()
         x0, y0, h0 = curr_pose
@@ -2016,22 +2016,12 @@ class Robot:
         direction_vector = direction / distance
         heading_vector = rutil.angle_to_dir(curr_pose[2])
 
-        h_err = rutil.angle_between_vectors(direction_vector,
-                heading_vector)
-
-        # Calculate the angular direction.
-        cross_prod = np.cross(heading_vector, direction_vector)
-        angle_dir = 0
-        if cross_prod > 0:
-            angle_dir = 1 # Counterclockwise.
-        elif cross_prod < 0:
-            angle_dir = -1 # Clockwise.
+        h_err = rutil.angle_error(heading_vector, direction_vector)
 
         # Case when it's quite possible to drive forward and turn.
-        if -math.pi/4 < h_err < +math.pi/4:
+        if -math.pi/4 < abs(h_err) < +math.pi/4:
 
-            if angle_dir != 0:
-                h_err *= angle_dir
+            if h_err != 0:
                 radius = distance *\
                         math.sin(math.pi/2 - h_err) / math.sin(2*h_err)
                 return radius
@@ -2040,16 +2030,12 @@ class Robot:
 
         # Case when we need to turn in place.
         else:
-            if angle_dir > 0:
+            if abs(h_err) > 0:
                 return DRIVE_RADIUS_COUNTER_CLOCKWISE
             else:
                 return DRIVE_RADIUS_CLOCKWISE
 
         return 0
-
-    def inverse_heading_kinematic(self, orientation):
-
-        pass
 
     def __forward_drive(v1, v2, b):
 
