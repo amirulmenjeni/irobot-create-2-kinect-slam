@@ -1827,13 +1827,18 @@ class Robot:
         dy = dd * math.sin(da)
         return np.array([dx, dy, da])
 
-    def get_pose(self):
+    def get_odom_pose(self):
 
         """
         Returns the position of the robot in cartesian coordinate of in the
         inertial reference frame.
         """
         return self.__pose
+
+    def get_slam_pose(self):
+
+        best_particle = self.fast_slam.highest_particle()
+        return best_particle.x
 
     def get_cell_pos(self):
 
@@ -2002,7 +2007,7 @@ class Robot:
 
     def inverse_kinematic(self, next_pos):
 
-        curr_pose = self.get_pose()
+        curr_pose = self.get_slam_pose()
         x0, y0, h0 = curr_pose
         x1, y1 = next_pos
 
@@ -2041,6 +2046,10 @@ class Robot:
                 return DRIVE_RADIUS_CLOCKWISE
 
         return 0
+
+    def inverse_heading_kinematic(self, orientation):
+
+        pass
 
     def __forward_drive(v1, v2, b):
 
