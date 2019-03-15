@@ -197,13 +197,15 @@ class Particle:
 
 class FastSLAM:
 
-    def __init__(self, map_size, resolution, dt, init_map, num_particles=150):
+    def __init__(self, map_size, resolution, dt, init_map, num_particles=150,
+        motion_noise=(1e-5, 1e-5, 1e-5, 1e-5)):
 
         self.MAP_SIZE = np.array(map_size)
         self.RESOLUTION = resolution
         self.M = num_particles
         self.DELTA_TIME = dt
         self.best_particle = 0
+        self.MOTION_NOISE = motion_noise
 
         self.is_map_initialized = False
         self.init_map_count = 0
@@ -234,8 +236,8 @@ class FastSLAM:
             z_cells = z_mat[:,:2]
 
             # Prediction step: State transition of each particle.
-            noise = (1e-3, 1e-3, 1e-3, 1e-3)
-            p.x = sample_motion_model_odometry(u_t, p.x, noise=noise)
+            p.x = sample_motion_model_odometry(u_t, p.x,\
+                noise=self.MOTION_NOISE)
 
             H = rutil.rigid_trans_mat3(p.x)
             z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
