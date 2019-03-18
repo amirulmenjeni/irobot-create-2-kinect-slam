@@ -1545,7 +1545,6 @@ class Robot:
                     imdraw.draw_horizontal_line(hum_image,\
                                 MAP_SIZE[0] // 2, (0, 0, 255))
 
-
                     if self.nearest_human is not None:
                         imdraw.draw_square(map_image,
                                 RESOLUTION, self.nearest_human,
@@ -2041,14 +2040,14 @@ class Robot:
 
             if h_err != 0:
                 radius = distance *\
-                        math.sin(math.pi/2 - h_err) / math.sin(2*h_err)
+                        math.sin(math.pi/2 + abs(h_err)) / math.sin(2*h_err)
                 return radius
             else:
                 return DRIVE_RADIUS_STRAIGHT
 
         # Case when we need to turn in place.
         else:
-            if abs(h_err) > 0:
+            if h_err > 0:
                 return DRIVE_RADIUS_COUNTER_CLOCKWISE
             else:
                 return DRIVE_RADIUS_CLOCKWISE
