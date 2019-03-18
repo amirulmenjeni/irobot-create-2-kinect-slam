@@ -225,7 +225,7 @@ class FastSLAM:
         # An Nx3 matrix where each row is [row, col, val], and where val is the
         # update to the belief on cell (row, col) on the occupancy grid map.
         obs_mat = observation_matrix(\
-            obs_dict, self.MAP_SIZE, occu=0.9, free=-0.7)
+            obs_dict, self.MAP_SIZE, occu=1.2, free=-0.9)
 
         max_weight = -1
         max_particle_index = 0
@@ -370,7 +370,7 @@ def fill_area(m, cell, radius, value, out=None):
         for j in range(u - radius, u + radius + 1):
             m[i, j] = value
             if out is not None:
-                out[i, j]
+                out[i, j] = value
     return m
 
 def observed_cells(pos, end_pt_cells):
