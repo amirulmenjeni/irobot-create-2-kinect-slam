@@ -64,6 +64,12 @@ class Arbiter():
     def get_robot(self):
         return self.__robot
 
+    def get_current_behavior_name(self):
+        if self.current_behavior is not None:
+            return self.current_behavior.get_name()
+        else:
+            return None
+
     def lock_others(self):
         self.current_behavior.stop()
         for arbiter in Arbiter.arbiters:
@@ -91,6 +97,7 @@ class Behavior():
         self.__interrupt = False
         self.__is_started = False
         self.__thread = None
+        self.__input_param = None
         self.timer = Timer()
 
         self.set_function(func)
@@ -132,6 +139,9 @@ class Behavior():
     def get_arbiter(self):
         return self.__arbiter
 
+    def get_param(self, param):
+        return self.__input_param[param]
+
     def interrupt(self):
         self.__interrupt = True
         self.__is_stopped = True
@@ -168,7 +178,10 @@ class Behavior():
     def reset(self):
         self.__thread = threading.Thread(
             target=self.__func, args=(self, self.__arbiter.get_robot()))
-        
+
+    def input_param(self, param):
+        self.__input_param = param
+
 class Timer:
 
     def __init__(self):

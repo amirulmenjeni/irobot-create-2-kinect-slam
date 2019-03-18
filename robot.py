@@ -14,6 +14,7 @@ import slam
 import rutil
 import config
 import logging
+import os
 import imdraw_util as imdraw
 from behavior_defn import beh_def_list, Beh
 from bbr import Arbiter, Behavior
@@ -62,11 +63,12 @@ MOTION_EXPLORE = 1
 MOTION_APPROACH = 2
 MOTION_ESCAPE = 3
 
-
 # Special radius values for DRIVE command.
 DRIVE_RADIUS_STRAIGHT = 32768
 DRIVE_RADIUS_COUNTER_CLOCKWISE = 1
 DRIVE_RADIUS_CLOCKWISE = 65535
+
+WINDOW_MAP = 'Display'
 
 class PIDController:
 
@@ -445,9 +447,12 @@ class Robot:
         # playsound(config.SND_INIT)
 
         ###################################################
-        # Initialize all threads.
+        # Manual control.
         ###################################################
-        # self.__init_threads()
+        cv2.namedWindow(WINDOW_MAP)
+        cv2.setMouseCallback(WINDOW_MAP, Robot.mouse_input_callback,\
+                self)
+        self.__manual_goal = []
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
         logging.info('Battery percentage on startup: {0}'.format(\
@@ -912,19 +917,19 @@ class Robot:
             cells_human = []
             if len(xy_humans) > 0:
 
-                print('xy_humans:', xy_humans)
+                # print('xy_humans:', xy_humans)
 
                 cells_human = slam.world_frame_to_cell_pos(xy_humans,\
                     config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-                print('cells_human:', cells_human)
+                # print('cells_human:', cells_human)
 
                 for cell in cells_human:
                     v, u = cell.astype(int)
                     obs_dict[v, u] = True 
 
             obs_mat = slam.observation_matrix(obs_dict, config.GRID_MAP_SIZE,
-                occu=0.9, free=-0.7)
+                occu=1.2, free=-0.9)
 
             obs_mat[:,0:2] = rutil.transform_cells_2d(H, obs_mat[:,0:2],
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
@@ -1481,7 +1486,16 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
 
-    def run(self, show_display=False):
+    def mouse_input_callback(event, x, y, flags, robot):
+
+        if event == cv2.EVENT_LBUTTONUP:
+
+            print('Input goal cell:', (y, x))
+            go_to_goal = robot.behaviors[Beh.GO_TO_INPUT_GOAL]
+            go_to_goal.input_param({ 'goal-cell': (y, x) })
+            go_to_goal.send_request()
+
+    def run(self, show_display=False, manual_control=False):
 
         self.__init_threads()
 
@@ -1496,30 +1510,29 @@ class Robot:
                 # Sensor readings.
                 nearest_human = self.get_nearest_human()
 
-                try:
-                    lbump, rbump = self.get_sensor(PKT_BUMP)
-                    if lbump or rbump:
-                        self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
-                except TypeError:
-                    # Unable to unpack sensor data: Error in getting the sensor
-                    # value.
-                    print('Error getting PKT_BUMP')
+                if not manual_control:
+                    try:
+                        lbump, rbump = self.get_sensor(PKT_BUMP)
+                        if lbump or rbump:
+                            self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
+                    except TypeError:
+                        # Unable to unpack sensor data: Error in getting the
+                        # sensor value.
+                        print('Error getting PKT_BUMP')
 
-                if nearest_human is not None:
-                    self.behaviors[Beh.APPROACH_HUMAN].send_request()
+                    # if nearest_human is not None:
+                    #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
 
-                self.behaviors[Beh.EXPLORE].send_request()
+                    self.behaviors[Beh.EXPLORE].send_request()
+
+                else:
+                    pass
 
                 if show_display:
 
                     best_particle = self.fast_slam.highest_particle()
                     map_image = slam.d3_map(best_particle.m, invert=True)
                     hum_image = slam.d3_map(self.hum_grid_map, invert=True)
-
-                    # Draw robot pose.
-                    imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-                        best_particle.x, bgr=(0, 255, 0), radius=1,
-                        show_heading=True)
 
                     # Draw global reference frame's vertical and horizontal
                     # axis.
@@ -1541,14 +1554,19 @@ class Robot:
                     if self.goal_cell is not None:
                         imdraw.draw_square(map_image,
                                 RESOLUTION, self.goal_cell,
-                                (255, 0, 0), pos_cell=True)
+                                (255, 0, 0), width=1, pos_cell=True)
 
                     for cell in self.current_solution:
                         imdraw.draw_square(map_image,
                             RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
 
-                    cv2.imshow('Display', np.hstack((map_image, hum_image)))
+                    # Draw robot pose.
+                    imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+                        best_particle.x, bgr=(0, 255, 0), radius=1,
+                        show_heading=True)
+
+                    cv2.imshow(WINDOW_MAP, map_image)
 
                 cv2.waitKey(100)
 
