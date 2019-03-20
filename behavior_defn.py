@@ -151,7 +151,7 @@ def explore(beh, robot):
         # there's no obstacles around here. This also prevent the robot getting
         # stuck due to A* search condition when an obstacle "spawns" very close
         # to the robot.
-        ru, rv = robot_cell
+        rv, ru = robot_cell
         for i in range(rv - KERNEL_RADIUS, rv + KERNEL_RADIUS + 1):
             for j in range(ru - KERNEL_RADIUS, ru + KERNEL_RADIUS + 1):
                 grid_map[i, j] = 0.1
@@ -224,10 +224,10 @@ def go_to_input_goal(beh, robot):
         # there's no obstacles around here. This also prevent the robot getting
         # stuck due to A* search condition when an obstacle "spawns" very close
         # to the robot.
-        ru, rv = robot_cell
+        rv, ru = robot_cell
         for i in range(rv - KERNEL_RADIUS, rv + KERNEL_RADIUS + 1):
             for j in range(ru - KERNEL_RADIUS, ru + KERNEL_RADIUS + 1):
-                grid_map[i, j] = 0.1
+                grid_map[i, j] = 0.05
 
         if next_cell is None:
             solution = slam.shortest_path(robot_cell, goal_cell,
@@ -249,6 +249,7 @@ def go_to_input_goal(beh, robot):
         except IndexError:
             print('GO-TO-INPUT-GOAL: Error getting next cell.')
             next_cell = None
+            robot.drive_velocity(0, 0)
             break
 
         if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
