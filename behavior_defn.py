@@ -203,7 +203,7 @@ def go_to_input_goal(beh, robot):
     DELTA_TIME = config.CONTROL_DELTA_TIME
 
     CELL_STEPS = 3
-    RADIUS_TOL = 30
+    RADIUS_TOL = 15
 
     goal_cell = beh.get_param('goal-cell')
     robot.goal_cell = goal_cell
