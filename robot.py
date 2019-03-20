@@ -15,6 +15,7 @@ import rutil
 import config
 import logging
 import os
+import socket
 import imdraw_util as imdraw
 from behavior_defn import beh_def_list, Beh
 from bbr import Arbiter, Behavior
@@ -22,8 +23,6 @@ from kinect import Kinect
 import freenect
 from openni import openni2
 from playsound import playsound
-from icp import icp
-from libfreenect_goodies import calibkinect
 from serial.tools import list_ports
 from kinematic import Trajectory
 from sklearn.neighbors import NearestNeighbors
@@ -356,7 +355,8 @@ class Robot:
                 sys.exit(-1)
 
         self.__b = b
-        self.__port = port
+        self.__serial_port = port
+        self.__client_port = 9000
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
 
         # Run start command.
@@ -452,7 +452,9 @@ class Robot:
         cv2.namedWindow(WINDOW_MAP)
         cv2.setMouseCallback(WINDOW_MAP, Robot.mouse_input_callback,\
                 self)
-        self.__manual_goal = []
+        self.__manual_goal = (-1, -1)
+        self.__display_map = np.full(\
+            (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255, np.uint8)
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
         logging.info('Battery percentage on startup: {0}'.format(\
@@ -512,8 +514,8 @@ class Robot:
                 name='Motion'),\
                 threading.Thread(target=Robot.thread_kinect, args=(self,),\
                 name='Kinect'),\
-                # threading.Thread(target=Robot.thread_main, args=(self,),\
-                # name='Main')
+                threading.Thread(target=Robot.thread_remote_input, args=(self,),\
+                name='RemoteInput')
         ]
 
         # A list of flag to maintain thread stop request
@@ -887,6 +889,41 @@ class Robot:
                 grid_map, 0.75)[0]
 
         return next_cell
+
+    def thread_remote_input(self):
+
+        host = ''
+        port = self.__client_port
+
+        print('Waiting for client connection...')
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, port))
+            s.listen(1)
+            conn, addr = s.accept()
+            print('Connected by {0}:{1}'.format(addr[0], addr[1]))
+
+            with conn:
+                while True:
+
+                    # Send map data to client.
+                    data = self.__display_map.tobytes()
+                    try:
+                        conn.sendall(data)
+                    except BrokenPipeError as e:
+                        print(e)
+
+                    # Get input data from client.
+                    data = b''
+                    while len(data) != 8:
+                        data += conn.recv(8)
+
+                    v = struct.unpack('>i', data[0:4])[0]
+                    u = struct.unpack('>i', data[4:8])[0]
+
+                    self.__manual_goal = (v, u)
+
+                    time.sleep(0.05)
 
     def thread_kinect(self):
 
@@ -1490,12 +1527,11 @@ class Robot:
 
         if event == cv2.EVENT_LBUTTONUP:
 
-            print('Input goal cell:', (y, x))
             go_to_goal = robot.behaviors[Beh.GO_TO_INPUT_GOAL]
             go_to_goal.input_param({ 'goal-cell': (y, x) })
             go_to_goal.send_request()
 
-    def run(self, show_display=False, manual_control=False):
+    def run(self, show_display=False, disable_auto=False):
 
         self.__init_threads()
 
@@ -1510,7 +1546,7 @@ class Robot:
                 # Sensor readings.
                 nearest_human = self.get_nearest_human()
 
-                if not manual_control:
+                if not disable_auto:
                     try:
                         lbump, rbump = self.get_sensor(PKT_BUMP)
                         if lbump or rbump:
@@ -1525,8 +1561,11 @@ class Robot:
 
                     self.behaviors[Beh.EXPLORE].send_request()
 
-                else:
-                    pass
+                if self.__manual_goal != (-1, -1):
+                    self.behaviors[Beh.GO_TO_INPUT_GOAL].input_param({\
+                            'goal-cell': self.__manual_goal})
+                    self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
+                    self.__manual_goal = (-1, -1)
 
                 if show_display:
 
@@ -1559,6 +1598,8 @@ class Robot:
                         imdraw.draw_square(map_image,
                             RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
+
+                    self.__display_map = map_image
 
                     # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
@@ -1886,70 +1927,6 @@ class Robot:
                 grid_map, occu_thres, kernel_radius=kernel_radius)
 
         return goal_cell, solution
-
-    def kinect_xy(self, detect_human=True):
-
-        """
-        DEPRECATED
-        """
-
-        # 480 x 640 ndarray matrix.
-        image, _ = freenect.sync_get_video()
-        depth, _ = freenect.sync_get_depth()
-
-        # # Find the rows and columns of minimum depth for each column.
-        depth_slice = np.min(depth, axis=0)[np.newaxis]
-
-        # print('depth slice:', depth_slice, depth_slice.shape)
-
-        # u, v = np.mgrid[:depth.shape[1], slice_row:slice_row+1]
-        u, v = np.mgrid[:depth_slice.shape[1], :depth_slice.shape[0]]
-
-        # xyz is an Nx3 array representing 3d coordinates of objects
-        # following standard right-handed coordinate system.
-        xyz_obstacles, uv = calibkinect.depth2xyzuv(depth_slice[v, u], u, v)
-
-        # Convert the 3d right-handed coordinate to the robot's 2d local 
-        # coordinate system.
-        x, y, z = xyz_obstacles.T
-        xy_obstacles = np.hstack((-z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-
-        # print('obs:', xy_obstacles, xy_obstacles.dtype)
-
-        # Get the x- and y-positions of detected human in the kinect image data
-        # with respect to the robot's local frame.
-        xy_humans = []
-
-        if detect_human:
-            pass
-
-        if len(xy_humans) > 0:
-            xy_humans *= 100.0
-
-        # Change from m to cm.
-        return xy_obstacles * 100.0, xy_humans
-
-    def kinect_human_regions(self, image):
-
-        """
-        SLOW AND POOR. DO NOT USE.
-        """
-
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-        cascade = cv2.CascadeClassifier(config.CASCADE_XML_PATH)
-
-        regions = cascade.detectMultiScale(image, scaleFactor=1.05,\
-            minNeighbors=2, minSize=(30,30))
-
-        for (x, y, w, h) in regions:
-            cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 1)
-
-        self.camera_image = image
-
-        return regions
 
     def get_prev_pose(self):
 
