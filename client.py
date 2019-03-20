@@ -6,7 +6,9 @@ import cv2
 HOST = '192.168.31.105'
 PORT = 9000
 MAP_SIZE = config.GRID_MAP_SIZE
+RGB_SIZE = (120, 160)
 BYTES_MAP = MAP_SIZE[0] * MAP_SIZE[1] * 3
+SCALE_FACTOR = 2
 
 input_cell = 0
 
@@ -16,7 +18,7 @@ def on_mouse(event, x, y, flags, param):
     
     if event == cv2.EVENT_LBUTTONUP:
         print('Clicked:', (y, x))
-        input_cell = (y, x) 
+        input_cell = (y // SCALE_FACTOR, x // SCALE_FACTOR) 
 
 cv2.namedWindow('Display')
 cv2.setMouseCallback('Display', on_mouse, None)
@@ -24,6 +26,7 @@ cv2.setMouseCallback('Display', on_mouse, None)
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
     s.connect((HOST, PORT))
+    f = config.MAP_SCALE_FACTOR
 
     while True:
 
@@ -42,10 +45,16 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             snd = y_buff + x_buff
         else:
             snd = bytes([255 for _ in range(8)])
+
         s.sendall(snd)
 
         # Reset input.
         input_cell = 0
+
+        new_w = map_img.shape[1] * SCALE_FACTOR
+        new_h = map_img.shape[0] * SCALE_FACTOR
+        map_img = cv2.resize(map_img, (new_h, new_w),
+            interpolation=cv2.INTER_AREA)
 
         cv2.imshow('Display', map_img)
 

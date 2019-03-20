@@ -1526,9 +1526,9 @@ class Robot:
     def mouse_input_callback(event, x, y, flags, robot):
 
         if event == cv2.EVENT_LBUTTONUP:
-
+            f = config.MAP_SCALE_FACTOR
             go_to_goal = robot.behaviors[Beh.GO_TO_INPUT_GOAL]
-            go_to_goal.input_param({ 'goal-cell': (y, x) })
+            go_to_goal.input_param({ 'goal-cell': (y // f, x // f) })
             go_to_goal.send_request()
 
     def run(self, show_display=False, disable_auto=False):
@@ -1599,12 +1599,17 @@ class Robot:
                             RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
 
-                    self.__display_map = map_image
-
                     # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
                         best_particle.x, bgr=(0, 255, 0), radius=1,
                         show_heading=True)
+
+                    self.__display_map = map_image
+
+                    f = config.MAP_SCALE_FACTOR
+                    new_shape = map_image.shape[1]*f, map_image.shape[0]*f
+                    map_image = cv2.resize(map_image, new_shape,
+                        interpolation=cv2.INTER_AREA)
 
                     cv2.imshow(WINDOW_MAP, map_image)
 
