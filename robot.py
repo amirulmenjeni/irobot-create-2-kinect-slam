@@ -1601,8 +1601,10 @@ class Robot:
 
                     # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-                        best_particle.x, bgr=(0, 255, 0), radius=1,
-                        show_heading=True)
+                        best_particle.x, bgr=(0, 153, 0), radius=3,
+                        show_heading=True, heading_thickness=2,
+                        border_thickness=1,
+                        border_bgr=(0, 51, 25))
 
                     self.__display_map = map_image
 
