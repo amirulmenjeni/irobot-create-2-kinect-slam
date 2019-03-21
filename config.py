@@ -9,6 +9,11 @@ PROJECT_PATH = '/home/amenji/git/fyp-robot-navigation/'
 PRIMESENSE_REDIST_PATH = PROJECT_PATH + '/redist/'
 
 ##################################################
+# DISPLAY / UI.
+##################################################
+MAP_SCALE_FACTOR = 2
+
+##################################################
 # ROBOT SPECIFIC.
 ##################################################
 
@@ -20,6 +25,7 @@ PID_X = (0.15, 0, 0)
 PID_Y = (0.15, 0, 0)
 
 NORMAL_DRIVE_SPEED = 5
+NORMAL_ROTATE_SPEED = 0.0873
 ESCAPE_OBSTACLE_SPEED = 5
 
 ##################################################
@@ -27,14 +33,15 @@ ESCAPE_OBSTACLE_SPEED = 5
 ##################################################
 CONTROL_DELTA_TIME = 0.25
 MEASURE_DELTA_TIME = 0
-PF_NUM_PARTICLES = 60
+PF_NUM_PARTICLES = 120
 GRID_MAP_RESOLUTION = 10.0
-GRID_MAP_SIZE = (500, 500)
+GRID_MAP_SIZE = (300, 300)
+MOTION_NOISE = (1e-4, 1e-4, 1e-6, 1e-6)
 OCCU_THRES = 0.90
 
 # Kernel defining the shape representation of the robot projected on the grid
 # map.
-BODY_KERNEL_RADIUS = 3
+BODY_KERNEL_RADIUS = 1
 
 ##################################################
 # SOUNDS

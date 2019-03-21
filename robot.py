@@ -424,7 +424,8 @@ class Robot:
             config.GRID_MAP_RESOLUTION,
             config.CONTROL_DELTA_TIME,
             np.copy(local_map),
-            num_particles=config.PF_NUM_PARTICLES)
+            num_particles=config.PF_NUM_PARTICLES,
+            motion_noise=config.MOTION_NOISE)
 
         self.path = []
         self.u_t = None
@@ -1019,7 +1020,7 @@ class Robot:
             if self.z_t is not None and self.u_t is not None and\
                     (np.abs(self.u_t) > 1e-6).any():
 
-                self.fast_slam.update(self.z_t, self.u_t)
+                self.fast_slam.update(self.z_t, self.u_t, config.OCCU_THRES)
                 self.z_t = None
                 self.u_t = None
 
