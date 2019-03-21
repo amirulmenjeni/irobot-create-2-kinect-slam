@@ -198,7 +198,7 @@ class Particle:
 class FastSLAM:
 
     def __init__(self, map_size, resolution, dt, init_map, num_particles=150,
-        motion_noise=(1e-5, 1e-5, 1e-5, 1e-5)):
+        motion_noise=(1e-3, 1e-3, 1e-3, 1e-3)):
 
         self.MAP_SIZE = np.array(map_size)
         self.RESOLUTION = resolution
@@ -216,7 +216,7 @@ class FastSLAM:
         self.particles =\
                 [Particle(x, w, np.copy(init_map)) for _ in range(self.M)]
 
-    def update(self, z_t, u_t):
+    def update(self, z_t, u_t, occu_thres):
 
         end_cells = world_frame_to_cell_pos(z_t, self.MAP_SIZE, self.RESOLUTION)
         mid = np.array(self.MAP_SIZE // 2).astype(int)
@@ -225,7 +225,7 @@ class FastSLAM:
         # An Nx3 matrix where each row is [row, col, val], and where val is the
         # update to the belief on cell (row, col) on the occupancy grid map.
         obs_mat = observation_matrix(\
-            obs_dict, self.MAP_SIZE, occu=1.2, free=-0.9)
+            obs_dict, self.MAP_SIZE, occu=0.9, free=-0.7)
 
         max_weight = -1
         max_particle_index = 0
@@ -245,7 +245,8 @@ class FastSLAM:
 
             # Correction step: Compute the weight of this particle.
             p.w = likelihood_field_measurement_model(z_cells, p.x,\
-                    np.argwhere(p.m > 0.90), self.MAP_SIZE, self.RESOLUTION)
+                    np.argwhere(p.m > occu_thres),\
+                    self.MAP_SIZE, self.RESOLUTION)
 
             if p.w > max_weight:
                 max_weight = p.w
@@ -661,7 +662,7 @@ def entropy_map(m):
 
     return vec_cell_entropy(m)
 
-def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
+def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.75,\
     k=100):
 
     """
@@ -681,7 +682,7 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.999,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=10, k=100, tol=1e-3, entropy_thres=0.95):
+def explore_cell(m, robot_cell, min_dist=10, k=100, tol=1e-3, entropy_thres=0.75):
 
     assert k >= 1
     assert type(k) == int
@@ -891,6 +892,18 @@ def sample_motion_model_odometry(u_t, prev_x,\
     h = h + d_rad_
 
     return np.array([x, y, h])
+
+def sample_motion_model_odometry_map(u_t, prev_x,
+        grid_map, resolution, occu_thres, noise=(1e-10, 1e-10, 1e-10, 1e-10)):
+
+    while True:
+        x_t = sample_motion_model_odometry(u_t, prev_x, noise)
+        cell = world_to_cell_pos(x_t, grid_map.shape, resolution)
+
+        # Stop sampling x_t when p(x_t | m) > 0 (i.e., when x_t is not in
+        # occupied cell).
+        if grid_map[cell] < occu_thres:
+            return x_t
 
 def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
