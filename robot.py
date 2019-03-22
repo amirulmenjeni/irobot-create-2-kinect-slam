@@ -67,6 +67,10 @@ DRIVE_RADIUS_STRAIGHT = 32768
 DRIVE_RADIUS_COUNTER_CLOCKWISE = 1
 DRIVE_RADIUS_CLOCKWISE = 65535
 
+# Keyboard keys.
+KEY_SPACE = 32
+KEY_ESC = 27
+
 WINDOW_MAP = 'Display'
 
 class PIDController:
@@ -385,6 +389,13 @@ class Robot:
         self.is_pid_enable = True
         self.is_autonomous = False
 
+        ###################################################
+        # SSH flag.
+        ###################################################
+        self.__conn_ssh = 'SSH_CONNECTION' in os.environ
+        if self.__conn_ssh:
+            print('SSH connection detected.')
+
         # Autonomous driving variables.
         self.auto_trajectory = None
         self.auto_timestep = 0
@@ -450,10 +461,12 @@ class Robot:
         ###################################################
         # Manual control.
         ###################################################
-        cv2.namedWindow(WINDOW_MAP)
-        cv2.setMouseCallback(WINDOW_MAP, Robot.mouse_input_callback,\
-                self)
+        if not self.__conn_ssh:
+            cv2.namedWindow(WINDOW_MAP)
+            cv2.setMouseCallback(WINDOW_MAP, Robot.mouse_input_callback,\
+                    self)
         self.__manual_goal = (-1, -1)
+        self.__client_keyboard = 0
         self.__display_map = np.full(\
             (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255, np.uint8)
 
@@ -534,6 +547,9 @@ class Robot:
             time.sleep(0.1)
 
     def clean_up(self):
+
+        self.drive_velocity(0, 0)
+        time.sleep(0.05)
 
         self.stop_all_threads()
         self.kin.clean_up()
@@ -916,13 +932,15 @@ class Robot:
 
                     # Get input data from client.
                     data = b''
-                    while len(data) != 8:
-                        data += conn.recv(8)
+                    while len(data) != 12:
+                        data += conn.recv(12)
 
                     v = struct.unpack('>i', data[0:4])[0]
                     u = struct.unpack('>i', data[4:8])[0]
+                    k = struct.unpack('>i', data[8:12])[0]
 
                     self.__manual_goal = (v, u)
+                    self.__client_keyboard = k
 
                     time.sleep(0.05)
 
@@ -1547,6 +1565,9 @@ class Robot:
                 # Sensor readings.
                 nearest_human = self.get_nearest_human()
 
+                if self.__client_keyboard == KEY_ESC:
+                    self.clean_up()
+
                 if not disable_auto:
                     try:
                         lbump, rbump = self.get_sensor(PKT_BUMP)
@@ -1561,6 +1582,9 @@ class Robot:
                     #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
 
                     self.behaviors[Beh.EXPLORE].send_request()
+
+                if self.__client_keyboard == KEY_SPACE:
+                    self.behaviors[Beh.STOP_DRIVING].send_request()
 
                 if self.__manual_goal != (-1, -1):
                     self.behaviors[Beh.GO_TO_INPUT_GOAL].input_param({\
@@ -1600,6 +1624,12 @@ class Robot:
                             RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
 
+                    for p in self.fast_slam.particles:
+                        for step in p.path:
+                            imdraw.draw_square(map_image,
+                                    config.GRID_MAP_RESOLUTION, step,
+                                    (0, 255, 0), width=1, pos_cell=True)
+
                     # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
                         best_particle.x, bgr=(0, 153, 0), radius=3,
@@ -1611,19 +1641,21 @@ class Robot:
 
                     f = config.MAP_SCALE_FACTOR
                     new_shape = map_image.shape[1]*f, map_image.shape[0]*f
-                    map_image = cv2.resize(map_image, new_shape,
-                        interpolation=cv2.INTER_AREA)
 
-                    cv2.imshow(WINDOW_MAP, map_image)
-
-                cv2.waitKey(100)
+                    if not self.__conn_ssh:
+                        map_image = cv2.resize(map_image, new_shape,
+                            interpolation=cv2.INTER_AREA)
+                        cv2.imshow(WINDOW_MAP, map_image)
+                
+                if not self.__conn_ssh:
+                    cv2.waitKey(100)
+                else:
+                    time.sleep(0.1)
 
         except KeyboardInterrupt:
 
             print('Cleaning up...')
 
-            self.drive_velocity(0, 0)
-            time.sleep(0.5)
             self.clean_up()
 
     def display(self):
