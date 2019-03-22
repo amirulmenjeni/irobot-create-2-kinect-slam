@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import cv2
+import socket
 from scipy import ndimage
 
 def rigid_trans_mat3(pose):
@@ -169,6 +170,13 @@ def disp_to_angle(disp):
 
     return a
 
+def direction_vector(p0, p1):
+
+    direction = p1 - p0
+    direction = direction / np.linalg.norm(direction)
+
+    return direction
+
 def angle_error(vec_from, vec_to):
 
     # Angle magnitude.
@@ -226,6 +234,11 @@ def euclidean_distance(a, b):
 def morph_map(m):
 
     return cv2.morphologyEx(m, cv2.MORPH_OPEN, (5, 5), iterations=2)
+
+def min_max_normalize(val, min_val, max_val):
+
+    r = max_val - min_val
+    return (val - min_val) / r
 
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
 vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)
