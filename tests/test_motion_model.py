@@ -1,7 +1,12 @@
+import sys
+sys.path.append('../')
+
 import numpy as np
 import cv2
 import slam
 import math
+import config
+import rutil
 import imdraw_util as imdraw
 
 def main():
@@ -10,80 +15,80 @@ def main():
     Demo of probabilistic motion model.
     """
 
-    MAP_SIZE = (500, 500)
-    RESOLUTION = 10.0
+    MAP_SIZE = config.GRID_MAP_SIZE
+    MAP_RESO = config.GRID_MAP_RESOLUTION
 
-    curr_pose = np.array([0, 0, 90])
-    control = np.array([700, 0])
-    dt = 0.25
+    map_image = np.full(MAP_SIZE, 0.5)
 
-    grid_map = np.zeros((500, 500), dtype=np.uint32)
-    grid_map.fill(255)
+    beg_cell = (150, 150)
+    end_cell = (150, 250)
 
-    # Forward velocity noise.
-    a1 = 1e-6
-    a2 = 1e-6
+    solution = slam.shortest_path(beg_cell, end_cell, map_image, 0.75)
+    i = 0
 
-    # Rotational velocity noise.
-    a3 = 3e-6
-    a4 = 3e-6
+    num_particles = 120
 
-    # Perturbation noise.
-    a5 = 3e-9
-    a6 = 3e-9
-    noise = (a1, a2, a3, a4, a5, a6)
-    noise = (1e-3, 1e-3, 1e-6, 1e-6, 1e-10, 1e-10)
+    x = np.array([0, 0, 0])
+    w = 1 / num_particles
+    particles =\
+            [slam.Particle(x, w) for _ in range(num_particles)]
 
-    sz = 5000
-    samples = np.array([[0, 0]] * sz)
-    for i in range(sz):
-        samples[i] = slam.sample_motion_model_velocity(control, curr_pose,
-                dt, noise=noise)[:2]
+    NOISE = (1e-4, 1e-4, 1e-6, 1e-6)
 
-    print(samples)
+    d3 = slam.d3_map(map_image, invert=True)
 
-    sample_cells = slam.world_frame_to_cell_pos(samples,\
-        grid_map.shape, 1)
+    flag_stop = False
+    distance = 0
+    while not flag_stop:
 
-    # Count samples.
-    sample_count = {}
+        if distance >= MAP_RESO * MAP_SIZE[1] // 2 - 50:
+            break
 
-    d = np.dstack((grid_map, grid_map, grid_map))
+        u_t = np.array([5, 0])
+        distance += 5
 
-    min_count = +np.inf
-    max_count = -np.inf
+        for particle in particles:
+            x_t = slam.sample_motion_model_odometry(u_t, particle.x, NOISE)
+            particle.x = np.copy(x_t)
+            # imdraw.draw_robot(d3, MAP_RESO, particle.x,
+            #     color=(0, 0, 0), border_thickness=1)
 
-    for row, col in sample_cells:
+        a = np.array([p.x[:2] for p in particles])
 
-        p = (row, col)
+        H, edges = np.histogramdd(a, 
+            bins=(MAP_SIZE[1], MAP_SIZE[0]),
+            range=([(-MAP_RESO * MAP_SIZE[1] // 2, MAP_RESO * MAP_SIZE[1] // 2),
+                    (-MAP_RESO * MAP_SIZE[0] // 2, MAP_RESO * MAP_SIZE[0] // 2)]))
 
-        if p not in sample_count:
-            sample_count[p] = 1
-        else:
-            sample_count[p] += 1
+        tmp = H[H>0]
+        min_count = np.min(tmp)
+        max_count = np.max(tmp)
 
-        if sample_count[p] < min_count:
-            min_count = sample_count[p]
-        elif sample_count[p] > max_count:
-            max_count = sample_count[p]
+        for x in range(H.shape[1]):
+            for y in range(H.shape[0]):
+                if H[x, y] > 0:
+                    grid_gray = d3[y, x][0]
+                    wpos = slam.cell_to_world_pos((y, x), MAP_SIZE, MAP_RESO)
+                    norm = rutil.min_max_normalize(H[x, y],
+                            min_count, max_count)
+                    if math.isnan(norm):
+                        norm = 1.0
+                    gray = 255 * norm
+                    gray = (grid_gray + gray) / 2
+                    gray = int(gray)
+                    gray = 255 - gray
+                    color = (gray, gray, gray)
+                    # imdraw.draw_robot(d3, MAP_RESO, wpos, bgr=color, radius=1,
+                    #         show_heading=False)
+                    imdraw.draw_square(d3, MAP_RESO, wpos, color, width=1)
 
-    print('min_count:', min_count)
-    print('max_count:', max_count)
+        imdraw.draw_grids(d3, 50, bgr=(0, 255, 0))
 
-    for row, col in sample_cells:
+        cv2.imshow('Map', d3)
 
-        p = (row, col)
+        cv2.waitKey(10)
 
-        gray_level = 255 * (sample_count[p] - min_count) /\
-                (max_count - min_count)
-        gray_level = int(gray_level)
-        d[p] = (gray_level, gray_level, gray_level)
-
-    imdraw.draw_square(d, 10.0, curr_pose, (255, 0, 0), width=1)
-
-    cv2.imshow('test', d.astype(np.uint8))
-
-    while 1:
+    while True:
         if cv2.waitKey(10) == ord('q'):
             break
 
