@@ -43,10 +43,15 @@ def draw_horizontal_line(d3_map, y_pos, bgr):
     for k in range(3):
         d3_map[y_pos, :, k] = bgr[k]
 
-def draw_robot(d3_map, resolution, pose, bgr=(255, 255, 0), radius=5,
-        show_heading=True, heading_thickness=1, border_thickness=-1,
-        border_bgr=(0, 0, 0)):
+def draw_grids(d3_map, interval, bgr=(0, 0, 255)):
 
+    g = np.mgrid[:d3_map.shape[1]:interval]
+    d3_map[g, :] = bgr
+    d3_map[:, g] = bgr
+
+def draw_robot(d3_map, resolution, pose, bgr=(255, 255, 0), radius=5,
+        show_heading=True, heading_thickness=1, border_thickness=0,
+        border_bgr=(0, 0, 0)):
 
     map_size = d3_map.shape[:2]
     y0, x0 = slam.world_to_cell_pos(pose[:2], map_size, resolution)
@@ -60,10 +65,13 @@ def draw_robot(d3_map, resolution, pose, bgr=(255, 255, 0), radius=5,
         y1, x1 = slam.world_to_cell_pos(p1, map_size, resolution)
 
         # Draw line (to show heading).
-        cv2.line(d3_map, (x0, y0), (x1, y1), border_bgr,
-                thickness=border_thickness+1)
+        if border_thickness != 0:
+            cv2.line(d3_map, (x0, y0), (x1, y1), border_bgr,
+                    thickness=border_thickness+1)
         cv2.line(d3_map, (x0, y0), (x1, y1), bgr, thickness=1)
         
     # Draw circle for body.
     cv2.circle(d3_map, (x0, y0), radius, bgr, thickness=-1)
-    cv2.circle(d3_map, (x0, y0), radius, border_bgr, thickness=border_thickness)
+    if border_thickness != 0:
+        cv2.circle(d3_map, (x0, y0), radius, border_bgr,
+                thickness=border_thickness)
