@@ -130,7 +130,7 @@ class ParticleFilter:
             else:
                 new_m = None
 
-            X.append(Particle(new_x, new_w, new_m))
+            X.append(Particle(new_x, new_w, new_m, particles[i].path))
 
         return X
 
@@ -186,6 +186,10 @@ class Particle:
         self.x = state
         self.w = weight
         self.m = grid_map
+        if path is None:
+            self.path = []
+        else:
+            self.path = path
 
     def create_random(range_x, range_y, range_h, weight):
 
@@ -238,6 +242,13 @@ class FastSLAM:
             # Prediction step: State transition of each particle.
             p.x = sample_motion_model_odometry(u_t, p.x,\
                 noise=self.MOTION_NOISE)
+
+            cell = world_to_cell_pos(p.x[:2], self.MAP_SIZE, self.RESOLUTION)
+            if len(p.path) == 0:
+                p.path.append(cell)
+
+            if p.path[-1] != cell:
+                p.path.append(cell)
 
             H = rutil.rigid_trans_mat3(p.x)
             z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
