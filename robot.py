@@ -1623,11 +1623,11 @@ class Robot:
                             RESOLUTION,
                             cell, (255, 0, 0), width=1, pos_cell=True)
 
-                    for p in self.fast_slam.particles:
-                        for step in p.path:
-                            imdraw.draw_square(map_image,
-                                    config.GRID_MAP_RESOLUTION, step,
-                                    (0, 255, 0), width=1, pos_cell=True)
+                    # for p in self.fast_slam.particles:
+                    #     for step in p.path:
+                    #         imdraw.draw_square(map_image,
+                    #                 config.GRID_MAP_RESOLUTION, step,
+                    #                 (0, 255, 0), width=1, pos_cell=True)
 
                     # Draw robot pose.
                     imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
