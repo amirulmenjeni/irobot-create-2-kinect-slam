@@ -1590,7 +1590,6 @@ class Robot:
                     self.behaviors[Beh.GO_TO_INPUT_GOAL].input_param({\
                             'goal-cell': self.__manual_goal})
                     self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
-                    self.__manual_goal = (-1, -1)
 
                 if show_display:
 
