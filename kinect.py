@@ -25,7 +25,10 @@ class Kinect:
 
     MAX_RANGE = 2**12 - 1
 
-    def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640)):
+    def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640),
+        enable_color_stream=False):
+
+        self.color_stream_enabled = enable_color_stream
 
         self.video_h = video_shape[0]
         self.video_w = video_shape[1]
@@ -38,10 +41,13 @@ class Kinect:
         self.dev = openni2.Device.open_any()
 
         self.depth_stream = self.dev.create_depth_stream()
-        self.color_stream = self.dev.create_color_stream()
-
         self.depth_stream.set_mirroring_enabled(False)
-        self.color_stream.set_mirroring_enabled(False)
+        self.depth_stream.start()
+
+        if enable_color_stream:
+            self.color_stream = self.dev.create_color_stream()
+            self.color_stream.set_mirroring_enabled(False)
+            self.color_stream.start()
 
         self.depth_stream.set_video_mode(\
             _openni2.OniVideoMode(\
@@ -49,9 +55,6 @@ class Kinect:
             resolutionX=self.depth_w,
             resolutionY=self.depth_h,
             fps=30))
-
-        self.depth_stream.start()
-        self.color_stream.start()
 
         try:
             self.user_tracker = nite2.UserTracker(self.dev)
@@ -65,20 +68,23 @@ class Kinect:
         self.dev.set_depth_color_sync_enabled(False)
 
         # Align depth to rgb.
-        self.dev.set_image_registration_mode(\
-            openni2.IMAGE_REGISTRATION_DEPTH_TO_COLOR)
+        # self.dev.set_image_registration_mode(\
+        #     openni2.IMAGE_REGISTRATION_DEPTH_TO_COLOR)
 
     def get_rgb(self):
 
-        data = self.color_stream.read_frame().get_buffer_as_uint8()
-        bgr = np.fromstring(data, dtype=np.uint8).reshape(480, 640, 3)
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        return rgb
+        if self.color_stream_enabled:
+            data = self.color_stream.read_frame().get_buffer_as_uint8()
+            bgr = np.frombuffer(data, dtype=np.uint8).reshape(480, 640, 3)
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            return rgb
+        else:
+            return None
 
     def get_depth(self):
 
         data = self.depth_stream.read_frame().get_buffer_as_uint16()
-        dmap = np.fromstring(data, dtype=np.uint16).reshape(480, 640)
+        dmap = np.frombuffer(data, dtype=np.uint16).reshape(480, 640)
 
         # No reading set to max depth.
         dmap[abs(dmap - 0) < 1e-6] = Kinect.MAX_RANGE
@@ -88,14 +94,17 @@ class Kinect:
     def get_users(self):
 
         frame = self.user_tracker.read_frame()
-
+        
         users = []
 
         if frame.users:
             for user in frame.users:
+
                 if user.is_new():
                     self.user_tracker.start_skeleton_tracking(user.id)
-                users.append(user)
+
+                if user.state == nite2.UserState.NITE_USER_STATE_VISIBLE:
+                    users.append(user)
 
         return users
 
@@ -123,7 +132,9 @@ class Kinect:
 
     def get_color_fps(self):
 
-        return self.color_stream.get_video_mode().fps
+        if self.color_stream_enabled:
+            return self.color_stream.get_video_mode().fps
+        return None
 
     def depth_display(depth_map):
 
@@ -157,7 +168,8 @@ class Kinect:
 
     def clean_up(self):
 
-        self.color_stream.stop()
+        if self.color_stream_enabled:
+            self.color_stream.stop()
         self.depth_stream.stop()
         openni2.unload()
         nite2.unload()
@@ -173,14 +185,16 @@ if __name__ == '__main__':
             dmap = kin.get_depth()
             dimg = Kinect.depth_display(dmap)
 
-            for upos in kin.get_users_pos():
-                print('wpos:', upos)
+            for user in kin.get_users():
+                print('user:', user.id)
+                print('state:', user.skeleton.state)
+                print(Kinect.user_wpos(user))
 
-            print('depth:', kin.depth_stream.get_video_mode().fps)
-            print('color:', kin.color_stream.get_video_mode().fps)
+            # print('depth:', kin.depth_stream.get_video_mode().fps)
+            # print('color:', kin.color_stream.get_video_mode().fps)
 
             cv2.imshow('Video', np.hstack((rgb, dimg)))
-            cv2.waitKey(60)
+            cv2.waitKey(150)
 
     except KeyboardInterrupt:
-        kin.cleanup()
+        kin.clean_up()
