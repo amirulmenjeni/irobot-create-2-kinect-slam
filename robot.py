@@ -1555,97 +1555,13 @@ class Robot:
         self.__init_threads()
 
         time.sleep(1)
-        
-        MAP_SIZE = config.GRID_MAP_SIZE
-        RESOLUTION = config.GRID_MAP_RESOLUTION
 
         try:
             while True:
 
-                # Sensor readings.
-                nearest_human = self.get_nearest_human()
+                self.__update_behavior(disable_auto)
+                self.__update_display(show_display)
 
-                if self.__client_keyboard == KEY_ESC:
-                    self.clean_up()
-
-                if not disable_auto:
-                    try:
-                        lbump, rbump = self.get_sensor(PKT_BUMP)
-                        if lbump or rbump:
-                            self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
-                    except TypeError:
-                        # Unable to unpack sensor data: Error in getting the
-                        # sensor value.
-                        print('Error getting PKT_BUMP')
-
-                    # if nearest_human is not None:
-                    #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
-
-                    self.behaviors[Beh.EXPLORE].send_request()
-
-                if self.__client_keyboard == KEY_SPACE:
-                    self.behaviors[Beh.STOP_DRIVING].send_request()
-
-                if self.__manual_goal != (-1, -1):
-                    self.behaviors[Beh.GO_TO_INPUT_GOAL].input_param({\
-                            'goal-cell': self.__manual_goal})
-                    self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
-
-                if show_display:
-
-                    best_particle = self.fast_slam.highest_particle()
-                    map_image = slam.d3_map(best_particle.m, invert=True)
-                    hum_image = slam.d3_map(self.hum_grid_map, invert=True)
-
-                    # Draw global reference frame's vertical and horizontal
-                    # axis.
-                    imdraw.draw_vertical_line(map_image,\
-                                MAP_SIZE[1] // 2, (0, 0, 255))
-                    imdraw.draw_horizontal_line(map_image,\
-                                MAP_SIZE[0] // 2, (0, 0, 255))
-                    imdraw.draw_vertical_line(hum_image,\
-                                MAP_SIZE[1] // 2, (0, 0, 255))
-                    imdraw.draw_horizontal_line(hum_image,\
-                                MAP_SIZE[0] // 2, (0, 0, 255))
-
-                    if self.nearest_human is not None:
-                        imdraw.draw_square(map_image,
-                                RESOLUTION, self.nearest_human,
-                                (0, 0, 255), pos_cell=True)
-
-                    if self.goal_cell is not None:
-                        imdraw.draw_square(map_image,
-                                RESOLUTION, self.goal_cell,
-                                (255, 0, 0), width=1, pos_cell=True)
-
-                    for cell in self.current_solution:
-                        imdraw.draw_square(map_image,
-                            RESOLUTION,
-                            cell, (255, 0, 0), width=1, pos_cell=True)
-
-                    # for p in self.fast_slam.particles:
-                    #     for step in p.path:
-                    #         imdraw.draw_square(map_image,
-                    #                 config.GRID_MAP_RESOLUTION, step,
-                    #                 (0, 255, 0), width=1, pos_cell=True)
-
-                    # Draw robot pose.
-                    imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-                        best_particle.x, bgr=(0, 153, 0), radius=3,
-                        show_heading=True, heading_thickness=2,
-                        border_thickness=1,
-                        border_bgr=(0, 51, 25))
-
-                    self.__display_map = map_image
-
-                    f = config.MAP_SCALE_FACTOR
-                    new_shape = map_image.shape[1]*f, map_image.shape[0]*f
-
-                    if not self.__conn_ssh:
-                        map_image = cv2.resize(map_image, new_shape,
-                            interpolation=cv2.INTER_AREA)
-                        cv2.imshow(WINDOW_MAP, map_image)
-                
                 if not self.__conn_ssh:
                     cv2.waitKey(100)
                 else:
@@ -1656,6 +1572,98 @@ class Robot:
             print('Cleaning up...')
 
             self.clean_up()
+
+    def __update_behavior(self, disable_auto):
+
+        # Sensor readings.
+        nearest_human = self.get_nearest_human()
+
+        if self.__client_keyboard == KEY_ESC:
+            self.clean_up()
+
+        if not disable_auto:
+            try:
+                lbump, rbump = self.get_sensor(PKT_BUMP)
+                if lbump or rbump:
+                    self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
+            except TypeError:
+                # Unable to unpack sensor data: Error in getting the
+                # sensor value.
+                print('Error getting PKT_BUMP')
+
+            # if nearest_human is not None:
+            #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
+
+            self.behaviors[Beh.EXPLORE].send_request()
+
+        if self.__client_keyboard == KEY_SPACE:
+            self.behaviors[Beh.STOP_DRIVING].send_request()
+
+        if self.__manual_goal != (-1, -1):
+            self.behaviors[Beh.GO_TO_INPUT_GOAL].input_param({\
+                    'goal-cell': self.__manual_goal})
+            self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
+
+    def __update_display(self, show_display):
+        
+        MAP_SIZE = config.GRID_MAP_SIZE
+        RESOLUTION = config.GRID_MAP_RESOLUTION
+
+        if show_display:
+
+            best_particle = self.fast_slam.highest_particle()
+            map_image = slam.d3_map(best_particle.m, invert=True)
+            hum_image = slam.d3_map(self.hum_grid_map, invert=True)
+
+            # Draw global reference frame's vertical and horizontal
+            # axis.
+            imdraw.draw_vertical_line(map_image,\
+                        MAP_SIZE[1] // 2, (0, 0, 255))
+            imdraw.draw_horizontal_line(map_image,\
+                        MAP_SIZE[0] // 2, (0, 0, 255))
+            imdraw.draw_vertical_line(hum_image,\
+                        MAP_SIZE[1] // 2, (0, 0, 255))
+            imdraw.draw_horizontal_line(hum_image,\
+                        MAP_SIZE[0] // 2, (0, 0, 255))
+
+            if self.nearest_human is not None:
+                imdraw.draw_square(map_image,
+                        RESOLUTION, self.nearest_human,
+                        (0, 0, 255), pos_cell=True)
+
+            if self.goal_cell is not None:
+                imdraw.draw_square(map_image,
+                        RESOLUTION, self.goal_cell,
+                        (255, 0, 0), width=1, pos_cell=True)
+
+            for cell in self.current_solution:
+                imdraw.draw_square(map_image,
+                    RESOLUTION,
+                    cell, (255, 0, 0), width=1, pos_cell=True)
+
+            # for p in self.fast_slam.particles:
+            #     for step in p.path:
+            #         imdraw.draw_square(map_image,
+            #                 config.GRID_MAP_RESOLUTION, step,
+            #                 (0, 255, 0), width=1, pos_cell=True)
+
+            # Draw robot pose.
+            imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+                best_particle.x, bgr=(0, 153, 0), radius=3,
+                show_heading=True, heading_thickness=2,
+                border_thickness=1,
+                border_bgr=(0, 51, 25))
+
+            self.__display_map = map_image
+
+            f = config.MAP_SCALE_FACTOR
+            new_shape = map_image.shape[1]*f, map_image.shape[0]*f
+
+            if not self.__conn_ssh:
+                map_image = cv2.resize(map_image, new_shape,
+                    interpolation=cv2.INTER_AREA)
+                cv2.imshow(WINDOW_MAP, map_image)
+                
 
     def display(self):
 
