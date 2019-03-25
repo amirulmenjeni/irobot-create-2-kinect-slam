@@ -267,6 +267,16 @@ def go_to_input_goal(beh, robot):
 
     print('<< GO-TO-INPUT-GOAL')
 
+def stop_driving(beh, robot):
+
+    print('>> STOP-DRIVING')
+
+    robot.current_solution = []
+    robot.goal_cell = None
+    robot.drive_velocity(0, 0)
+    
+    print('<< STOP-DRIVING')
+
 def escape_obstacle(beh, robot):
 
     playsound(config.SND_OOPS)
@@ -306,10 +316,12 @@ class Beh(Enum):
     APPROACH_HUMAN = auto()
     ESCAPE_OBSTACLE = auto()
     GO_TO_INPUT_GOAL = auto()
+    STOP_DRIVING = auto()
 
 beh_def_list = [\
     (Beh.EXPLORE, 0, explore),
     # (Beh.APPROACH_HUMAN, 200, approach_human),
     (Beh.ESCAPE_OBSTACLE, 999, escape_obstacle),
-    (Beh.GO_TO_INPUT_GOAL, 1000, go_to_input_goal)
+    (Beh.GO_TO_INPUT_GOAL, 2000, go_to_input_goal),
+    (Beh.STOP_DRIVING, 3001, stop_driving)
 ]
