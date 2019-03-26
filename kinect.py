@@ -28,7 +28,7 @@ class Kinect:
     MAX_DEPTH_MM = 8000
 
     def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640),
-        enable_color_stream=False):
+            enable_color_stream=False):
 
         self.color_stream_enabled = enable_color_stream
 
@@ -170,13 +170,13 @@ class Kinect:
         # Filter out values outside accepted range.
         depth_map[depth_map <= Kinect.MIN_DEPTH_MM] = 10000
         depth_map[depth_map >= Kinect.MAX_DEPTH_MM] = 10000
-
-        # Filter out depth values above the robot's height.
-        v, u = np.where(Y >= 150.0)
+        
+        # Filter out depth values above the kinect's height.
+        v, u = np.where(Y >= 100)
         depth_map[v, u] = 10000
 
         # Filter out depth values below certain height.
-        v, u = np.where(Y <= -75.0)
+        v, u = np.where(Y <= -650)
         depth_map[v, u] = 10000
 
         return depth_map
@@ -200,7 +200,7 @@ class Kinect:
 
         world_xyz = np.array(world_xyz)
 
-        obstacles_xy = np.full((0, 2), 0)
+        obstacles_xy = np.full((1, 2), 0)
 
         if len(world_xyz) > 0:
             x, y, z = world_xyz.T
@@ -225,11 +225,14 @@ class Kinect:
         X_MULT = 1.12032
         Y_MULT = 0.84024
 
-        j_norm = (j - 0) / w
-        i_norm = (i - 0) / h
+        j_norm = j / w
+        i_norm = i / h
 
-        X = (j_norm - 0.5) * X_MULT * depth_map
-        Y = (i_norm - 0.5) * Y_MULT * depth_map
+        X = +(j_norm - 0.5) * X_MULT * depth_map
+        Y = -(i_norm - 0.5) * Y_MULT * depth_map
+
+        # X = +(j - (w / 2)) * (320 / w) * X_MULT * depth_map * 0.001
+        # Y = -(i - (h / 2)) * (240 / h) * Y_MULT * depth_map * 0.001
 
         return X, Y
 
