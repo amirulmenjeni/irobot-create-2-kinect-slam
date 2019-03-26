@@ -145,9 +145,9 @@ class Kinect:
                 img = (img - 0) / (10000 - 0)
 
         else:
-            x_ij, y_ij = Kinect.xy_map(depth_map)
+            X, Y = Kinect.xy_map(depth_map)
 
-            img = Kinect.cleaned_depth_map(depth_map, y_ij)
+            img = Kinect.cleaned_depth_map(depth_map, Y)
 
             RANGE = Kinect.MAX_DEPTH_MM - Kinect.MIN_DEPTH_MM
             img = (img - Kinect.MIN_DEPTH_MM) / RANGE
@@ -172,7 +172,7 @@ class Kinect:
         depth_map[depth_map >= Kinect.MAX_DEPTH_MM] = 10000
 
         # Filter out depth values above the robot's height.
-        v, u = np.where(Y >= 70.0)
+        v, u = np.where(Y >= 150.0)
         depth_map[v, u] = 10000
 
         # Filter out depth values below certain height.
@@ -213,7 +213,7 @@ class Kinect:
 
         """
         Returns X and Y, each of which is a 480x640 array which maps each pixel
-        to their respective world-coordinates.
+        to their respective world-coordinates in cm.
         """
 
         w = depth_map.shape[1]
@@ -223,13 +223,13 @@ class Kinect:
 
         # Constants multiplier to get world x- and y-coordinates.
         X_MULT = 1.12032
-        Y_MULT = 0.84824
+        Y_MULT = 0.84024
 
         j_norm = (j - 0) / w
         i_norm = (i - 0) / h
 
-        X = (j_norm - 0.5) * (320 / w) * X_MULT * depth_map
-        Y = (i_norm - 0.5) * (240 / h) * Y_MULT * depth_map
+        X = (j_norm - 0.5) * X_MULT * depth_map
+        Y = (i_norm - 0.5) * Y_MULT * depth_map
 
         return X, Y
 
