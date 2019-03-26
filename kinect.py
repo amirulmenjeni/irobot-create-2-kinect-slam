@@ -1,8 +1,8 @@
 import sys
 import numpy as np
 import cv2
-from openni import openni2, nite2, utils
-from openni import _openni2, _nite2
+import slam
+from openni import openni2, nite2, _openni2, _nite2, utils
 
 class Kinect:
 
@@ -24,6 +24,8 @@ class Kinect:
     JOINT_RIGHT_FOOT = 14
 
     MAX_RANGE = 2**12 - 1
+    MIN_DEPTH_MM = 600
+    MAX_DEPTH_MM = 8000
 
     def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640),
         enable_color_stream=False):
@@ -40,21 +42,20 @@ class Kinect:
         
         self.dev = openni2.Device.open_any()
 
-        self.depth_stream = self.dev.create_depth_stream()
-        self.depth_stream.set_mirroring_enabled(False)
-        self.depth_stream.start()
-
         if enable_color_stream:
             self.color_stream = self.dev.create_color_stream()
             self.color_stream.set_mirroring_enabled(False)
             self.color_stream.start()
 
+        self.depth_stream = self.dev.create_depth_stream()
+        self.depth_stream.set_mirroring_enabled(False)
         self.depth_stream.set_video_mode(\
             _openni2.OniVideoMode(\
             pixelFormat=_openni2.OniPixelFormat.ONI_PIXEL_FORMAT_DEPTH_1_MM,\
-            resolutionX=self.depth_w,
-            resolutionY=self.depth_h,
+            resolutionX=self.depth_w,\
+            resolutionY=self.depth_h,\
             fps=30))
+        self.depth_stream.start()
 
         try:
             self.user_tracker = nite2.UserTracker(self.dev)
@@ -85,9 +86,6 @@ class Kinect:
 
         data = self.depth_stream.read_frame().get_buffer_as_uint16()
         dmap = np.frombuffer(data, dtype=np.uint16).reshape(480, 640)
-
-        # No reading set to max depth.
-        dmap[abs(dmap - 0) < 1e-6] = Kinect.MAX_RANGE
 
         return dmap
 
@@ -136,35 +134,104 @@ class Kinect:
             return self.color_stream.get_video_mode().fps
         return None
 
-    def depth_display(depth_map):
+    def depth_display(depth_map, clean=False):
 
-        d = np.uint8(depth_map.astype(float) * 255 / Kinect.MAX_RANGE)
-        d = 255 - cv2.cvtColor(d, cv2.COLOR_GRAY2RGB)
+        img = np.copy(depth_map.astype(np.float32))
+
+        if not clean:
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(img)
+
+            if min_val < max_val:
+                img = (img - 0) / (10000 - 0)
+
+        else:
+            x_ij, y_ij = Kinect.xy_map(depth_map)
+
+            img = Kinect.cleaned_depth_map(depth_map, y_ij)
+
+            RANGE = Kinect.MAX_DEPTH_MM - Kinect.MIN_DEPTH_MM
+            img = (img - Kinect.MIN_DEPTH_MM) / RANGE
+
+            img = img.astype(np.float32)
+
+        d = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+
         return d
 
-    def depth_map_to_world(self, depth_map, slice_row=-1):
+    def cleaned_depth_map(depth_map, Y):
 
-        if slice_row < 0:
+        """
+        Attempt to clean the depth_map from noise. Y is 480x640 array that
+        maps each pixel to the real-world y-coordinates.
+        """
+
+        depth_map = np.copy(depth_map)
+
+        # Filter out values outside accepted range.
+        depth_map[depth_map <= Kinect.MIN_DEPTH_MM] = 10000
+        depth_map[depth_map >= Kinect.MAX_DEPTH_MM] = 10000
+
+        # Filter out depth values above the robot's height.
+        v, u = np.where(Y >= 70.0)
+        depth_map[v, u] = 10000
+
+        # Filter out depth values below certain height.
+        v, u = np.where(Y <= -75.0)
+        depth_map[v, u] = 10000
+
+        return depth_map
+
+    def depth_map_to_world(self, depth_map, clean=False, slice_row=240):
+
+        if clean:
+            _, Y = Kinect.xy_map(depth_map)
+            depth_map = Kinect.cleaned_depth_map(depth_map, Y)
             depth_slice = np.min(depth_map, axis=0)[np.newaxis]
         else:
             depth_slice = depth_map[slice_row, :][np.newaxis]
 
-        world_xyz = [0] * self.depth_w
-
-        # Set erroneous value (max range) to 0.
-        depth_slice[depth_slice == Kinect.MAX_RANGE] = 0
+        world_xyz = []
 
         for u in range(self.depth_w):
-            world_xyz[u] = openni2.convert_depth_to_world(\
-                self.depth_stream, u, 0, depth_slice[0][u])
+            if Kinect.MIN_DEPTH_MM < depth_slice[0][u] < Kinect.MAX_DEPTH_MM:
+                xyz = openni2.convert_depth_to_world(\
+                    self.depth_stream, u, 0, depth_slice[0][u])
+                world_xyz.append(xyz)
 
         world_xyz = np.array(world_xyz)
 
-        x, y, z = world_xyz.T
-        obstacles_xy = np.hstack((z.T[:, np.newaxis], -x.T[:, np.newaxis]))
-        obstacles_xy *= 0.1 # mm to cm
+        obstacles_xy = np.full((0, 2), 0)
+
+        if len(world_xyz) > 0:
+            x, y, z = world_xyz.T
+            obstacles_xy = np.hstack((z.T[:, np.newaxis], -x.T[:, np.newaxis]))
+            obstacles_xy *= 0.1 # mm to cm
 
         return obstacles_xy
+
+    def xy_map(depth_map):
+
+        """
+        Returns X and Y, each of which is a 480x640 array which maps each pixel
+        to their respective world-coordinates.
+        """
+
+        w = depth_map.shape[1]
+        h = depth_map.shape[0]
+
+        i, j = np.mgrid[:h, :w]
+
+        # Constants multiplier to get world x- and y-coordinates.
+        X_MULT = 1.12032
+        Y_MULT = 0.84824
+
+        j_norm = (j - 0) / w
+        i_norm = (i - 0) / h
+
+        X = (j_norm - 0.5) * (320 / w) * X_MULT * depth_map
+        Y = (i_norm - 0.5) * (240 / h) * Y_MULT * depth_map
+
+        return X, Y
 
     def clean_up(self):
 
@@ -176,7 +243,7 @@ class Kinect:
 
 if __name__ == '__main__':
 
-    kin = Kinect('./redist')
+    kin = Kinect('./redist', enable_color_stream=True)
 
     try:
         while 1:
@@ -185,15 +252,8 @@ if __name__ == '__main__':
             dmap = kin.get_depth()
             dimg = Kinect.depth_display(dmap)
 
-            for user in kin.get_users():
-                print('user:', user.id)
-                print('state:', user.skeleton.state)
-                print(Kinect.user_wpos(user))
-
-            # print('depth:', kin.depth_stream.get_video_mode().fps)
-            # print('color:', kin.color_stream.get_video_mode().fps)
-
-            cv2.imshow('Video', np.hstack((rgb, dimg)))
+            cv2.imshow('Color', rgb)
+            cv2.imshow('Depth', dimg)
             cv2.waitKey(150)
 
     except KeyboardInterrupt:
