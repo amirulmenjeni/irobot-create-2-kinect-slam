@@ -1643,62 +1643,58 @@ class Robot:
         MAP_SIZE = config.GRID_MAP_SIZE
         RESOLUTION = config.GRID_MAP_RESOLUTION
 
-        if show_display:
+        best_particle = self.fast_slam.highest_particle()
+        map_image = slam.d3_map(best_particle.m, invert=True)
+        hum_image = slam.d3_map(self.hum_grid_map, invert=True)
 
-            best_particle = self.fast_slam.highest_particle()
-            map_image = slam.d3_map(best_particle.m, invert=True)
-            hum_image = slam.d3_map(self.hum_grid_map, invert=True)
+        # Draw global reference frame's vertical and horizontal
+        # axis.
+        imdraw.draw_vertical_line(map_image,\
+                    MAP_SIZE[1] // 2, (0, 0, 255))
+        imdraw.draw_horizontal_line(map_image,\
+                    MAP_SIZE[0] // 2, (0, 0, 255))
+        imdraw.draw_vertical_line(hum_image,\
+                    MAP_SIZE[1] // 2, (0, 0, 255))
+        imdraw.draw_horizontal_line(hum_image,\
+                    MAP_SIZE[0] // 2, (0, 0, 255))
 
-            # Draw global reference frame's vertical and horizontal
-            # axis.
-            imdraw.draw_vertical_line(map_image,\
-                        MAP_SIZE[1] // 2, (0, 0, 255))
-            imdraw.draw_horizontal_line(map_image,\
-                        MAP_SIZE[0] // 2, (0, 0, 255))
-            imdraw.draw_vertical_line(hum_image,\
-                        MAP_SIZE[1] // 2, (0, 0, 255))
-            imdraw.draw_horizontal_line(hum_image,\
-                        MAP_SIZE[0] // 2, (0, 0, 255))
+        if self.nearest_human is not None:
+            imdraw.draw_square(map_image,
+                    RESOLUTION, self.nearest_human,
+                    (0, 0, 255), pos_cell=True)
 
-            if self.nearest_human is not None:
-                imdraw.draw_square(map_image,
-                        RESOLUTION, self.nearest_human,
-                        (0, 0, 255), pos_cell=True)
+        if self.goal_cell is not None:
+            imdraw.draw_square(map_image,
+                    RESOLUTION, self.goal_cell,
+                    (255, 0, 0), width=1, pos_cell=True)
 
-            if self.goal_cell is not None:
-                imdraw.draw_square(map_image,
-                        RESOLUTION, self.goal_cell,
-                        (255, 0, 0), width=1, pos_cell=True)
+        for cell in self.current_solution:
+            imdraw.draw_square(map_image,
+                RESOLUTION,
+                cell, (255, 0, 0), width=1, pos_cell=True)
 
-            for cell in self.current_solution:
-                imdraw.draw_square(map_image,
-                    RESOLUTION,
-                    cell, (255, 0, 0), width=1, pos_cell=True)
+        # for p in self.fast_slam.particles:
+        #     for step in p.path:
+        #         imdraw.draw_square(map_image,
+        #                 config.GRID_MAP_RESOLUTION, step,
+        #                 (0, 255, 0), width=1, pos_cell=True)
 
-            # for p in self.fast_slam.particles:
-            #     for step in p.path:
-            #         imdraw.draw_square(map_image,
-            #                 config.GRID_MAP_RESOLUTION, step,
-            #                 (0, 255, 0), width=1, pos_cell=True)
+        # Draw robot pose.
+        imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
+            best_particle.x, bgr=(0, 153, 0), radius=1,
+            show_heading=True, heading_thickness=2,
+            border_thickness=1,
+            border_bgr=(0, 51, 25))
 
-            # Draw robot pose.
-            imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-                best_particle.x, bgr=(0, 153, 0), radius=3,
-                show_heading=True, heading_thickness=2,
-                border_thickness=1,
-                border_bgr=(0, 51, 25))
+        self.__display_map = map_image
 
-            self.__display_map = map_image
-
+        if not self.__conn_ssh and show_display:
             f = config.MAP_SCALE_FACTOR
             new_shape = map_image.shape[1]*f, map_image.shape[0]*f
-
-            if not self.__conn_ssh:
-                map_image = cv2.resize(map_image, new_shape,
-                    interpolation=cv2.INTER_AREA)
-                cv2.imshow(WINDOW_MAP, map_image)
+            map_image = cv2.resize(map_image, new_shape,
+                interpolation=cv2.INTER_AREA)
+            cv2.imshow(WINDOW_MAP, map_image)
                 
-
     def display(self):
 
         best_particle = self.fast_slam.highest_particle()
@@ -1991,7 +1987,7 @@ class Robot:
         robot_cell = self.get_cell_pos()
         occu_thres = config.OCCU_THRES
 
-        grid_map = self.fast_slam.highest_particle().m
+        grid_map = np.copy(self.fast_slam.highest_particle().m)
         entr_map = slam.entropy_map(grid_map)
 
         goal_cell = slam.explore_cell(entr_map, robot_cell)
