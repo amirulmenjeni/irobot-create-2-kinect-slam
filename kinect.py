@@ -142,15 +142,15 @@ class Kinect:
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(img)
 
             if min_val < max_val:
-                img = (img - 0) / (10000 - 0)
+                img = (img - min_val) / (max_val - min_val)
 
         else:
             X, Y = Kinect.xy_map(depth_map)
-
             img = Kinect.cleaned_depth_map(depth_map, Y)
 
-            RANGE = Kinect.MAX_DEPTH_MM - Kinect.MIN_DEPTH_MM
-            img = (img - Kinect.MIN_DEPTH_MM) / RANGE
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(img)
+
+            img = (img - min_val) / (max_val - min_val)
 
             img = img.astype(np.float32)
 
@@ -172,7 +172,7 @@ class Kinect:
         depth_map[depth_map >= Kinect.MAX_DEPTH_MM] = 10000
         
         # Filter out depth values above the kinect's height.
-        v, u = np.where(Y >= 100)
+        v, u = np.where(Y >= 650)
         depth_map[v, u] = 10000
 
         # Filter out depth values below certain height.
