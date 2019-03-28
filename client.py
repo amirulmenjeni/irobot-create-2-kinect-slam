@@ -1,10 +1,10 @@
 import numpy as np
 import socket
 import config
-import threading
 import time
 import datetime
 import cv2
+from pynput.keyboard import Key, Listener, KeyCode
 
 HOST = '192.168.31.108'
 PORT = 9000
@@ -14,34 +14,42 @@ BYTES_MAP = MAP_SIZE[0] * MAP_SIZE[1] * 3
 SCALE_FACTOR = 2
 AUTO_SAVE_INTERVAL = 60
 
-KEY_SPACE = ord(' ')
-KEY_W = ord('w')
-KEY_ESC = 27
+DRIVE_KEYS = ['w', 'a', 's', 'd']
 
-input_cell = 0
+input_cell = (2**32-1, 2**32-1)
 input_key = 0
 
-KEY_W = ord('w')
+KEY_F1 = 190
+KEY_SPACE = 32
+KEY_ESC = 27
 
 def on_mouse(event, x, y, flags, param):
 
     global input_cell
-    
+
     if event == cv2.EVENT_LBUTTONUP:
         print('Clicked:', (y, x))
         input_cell = (y // SCALE_FACTOR, x // SCALE_FACTOR) 
 
-def on_keyboard():
-
+def on_release(key):
+    
     global input_key
 
-    while True:
+    print('key:', key, type(key))
 
-        key = cv2.waitKey(0)
+    if type(key) == KeyCode:
+        if key.char in DRIVE_KEYS:
+            input_key = ord(key.char)
 
-        print('key pressed:', key)
+    elif type(key) == Key:
+        if key == Key.space:
+            input_key = KEY_SPACE
+        elif key == Key.esc:
+            input_key = KEY_ESC
+        elif key == Key.f1:
+            input_key = KEY_F1
 
-        input_key = key
+    print('input key:', input_key)
 
 def save_map_image(map_image):
 
@@ -58,11 +66,19 @@ def save_map_image(map_image):
 
     print(filename, 'saved.')
 
-
-keyboard_thread = threading.Thread(target=on_keyboard)
-
 cv2.namedWindow('Display')
 cv2.setMouseCallback('Display', on_mouse, None)
+
+# Collect events.
+listener = Listener(on_release=on_release)
+
+print('Starting listener...')
+listener.start()
+
+print('Waiting listener to get ready...')
+listener.wait()
+
+print('Listener is now ready.')
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
@@ -71,7 +87,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
     cv2.imshow('Display', np.full((30, 30), 0))
     cv2.waitKey(10)
-    keyboard_thread.start()
 
     try:
 
@@ -81,7 +96,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
             try:
                 data = b''
-                print('recv...')
                 while len(data) != BYTES_MAP:
                     data += s.recv(4096)
                 map_img = np.frombuffer(data, np.uint8)
@@ -98,15 +112,14 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     snd = bytes([255 for _ in range(8)])
                 snd += (input_key).to_bytes(4, byteorder='big')
 
-                print('send...')
                 s.sendall(snd)
 
-                if input_key == KEY_W:
+                if input_key == KEY_F1:
                     save_map_image(map_img)
 
-                # if (time.time() - tstart) >= AUTO_SAVE_INTERVAL:
-                #     save_map_image(map_img)
-                #     tstart = time.time()
+                if (time.time() - tstart) >= AUTO_SAVE_INTERVAL:
+                    save_map_image(map_img)
+                    tstart = time.time()
 
                 # Reset input.
                 input_cell = 0
@@ -118,6 +131,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     interpolation=cv2.INTER_AREA)
 
                 cv2.imshow('Display', map_img)
+                cv2.waitKey(100)
 
             except socket.error:
                 print('Connection lost! Attempting to reconnect...')
@@ -131,7 +145,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         print('Trying again...')
                         time.sleep(2)
 
-            cv2.waitKey(100)
 
     except KeyboardInterrupt:
-        keyboard_thread.join()
+        listener.join()

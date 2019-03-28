@@ -68,8 +68,12 @@ DRIVE_RADIUS_COUNTER_CLOCKWISE = 1
 DRIVE_RADIUS_CLOCKWISE = 65535
 
 # Keyboard keys.
-KEY_SPACE = 32
+KEY_SPACE = ord(' ')
 KEY_ESC = 27
+KEY_W = 119
+KEY_A = 97
+KEY_S = 115
+KEY_D = 100
 
 WINDOW_MAP = 'Display'
 
@@ -466,6 +470,8 @@ class Robot:
             cv2.setMouseCallback(WINDOW_MAP, Robot.mouse_input_callback,\
                     self)
         self.__manual_goal = (-1, -1)
+        self.__manual_v = 0
+        self.__manual_w = 0
         self.__client_keyboard = 0
         self.__display_map = np.full(\
             (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255, np.uint8)
@@ -483,7 +489,7 @@ class Robot:
         for _ in range(iterations):
 
             depth_map = self.kin.get_depth()
-            world_xy = self.kin.depth_map_to_world(depth_map)
+            world_xy = self.kin.depth_map_to_world(depth_map, clean=True)
 
             end_cells = slam.world_frame_to_cell_pos(world_xy,\
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
@@ -953,7 +959,7 @@ class Robot:
 
             # The x-y-locations of obstacles projected from kinect's depth.
             depth_map = self.kin.get_depth()
-            self.z_t = self.kin.depth_map_to_world(depth_map)
+            self.z_t = self.kin.depth_map_to_world(depth_map, slice_row=240)
 
             end_cells = slam.world_frame_to_cell_pos(self.z_t,\
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
@@ -1575,6 +1581,9 @@ class Robot:
 
     def __update_behavior(self, disable_auto):
 
+        DELTA_V = 0.5
+        DELTA_W = 0.0349 # in radians (~2 degrees)
+
         # Sensor readings.
         nearest_human = self.get_nearest_human()
 
@@ -1596,7 +1605,32 @@ class Robot:
 
             self.behaviors[Beh.EXPLORE].send_request()
 
+        input_v = 0
+        input_w = 0
+        if self.__client_keyboard in [KEY_W, KEY_S, KEY_A, KEY_D]:
+
+            if self.__client_keyboard == KEY_W:
+                self.__manual_v = self.__manual_v + DELTA_V 
+
+            elif self.__client_keyboard == KEY_S:
+                self.__manual_v = self.__manual_v - DELTA_V
+
+            elif self.__client_keyboard == KEY_A:
+                self.__manual_w = self.__manual_w + DELTA_W
+
+            elif self.__client_keyboard == KEY_D:
+                self.__manual_w = self.__manual_w - DELTA_W
+
+            input_v = rutil.cap(self.__manual_v, -15, 15)
+            input_w = rutil.cap(self.__manual_w, -0.175, +0.175)
+
+            self.behaviors[Beh.MANUAL_DRIVING].input_param({\
+                    'v': input_v, 'w': input_w})
+            self.behaviors[Beh.MANUAL_DRIVING].send_request()
+
         if self.__client_keyboard == KEY_SPACE:
+            self.__manual_v = 0
+            self.__manual_w = 0
             self.behaviors[Beh.STOP_DRIVING].send_request()
 
         if self.__manual_goal != (-1, -1):
@@ -1605,7 +1639,7 @@ class Robot:
             self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
 
     def __update_display(self, show_display):
-        
+
         MAP_SIZE = config.GRID_MAP_SIZE
         RESOLUTION = config.GRID_MAP_RESOLUTION
 

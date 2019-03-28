@@ -225,9 +225,10 @@ def go_to_input_goal(beh, robot):
         # stuck due to A* search condition when an obstacle "spawns" very close
         # to the robot.
         rv, ru = robot_cell
-        for i in range(rv - KERNEL_RADIUS, rv + KERNEL_RADIUS + 1):
-            for j in range(ru - KERNEL_RADIUS, ru + KERNEL_RADIUS + 1):
-                grid_map[i, j] = 0.05
+        # for i in range(rv - KERNEL_RADIUS, rv + BODY_RADIUS_CELL + 1):
+        #     for j in range(ru - BODY_RADIUS_CELL, ru + BODY_RADIUS_CELL + 1):
+        #         grid_map[i, j] = 0.05
+        grid_map[rv, ru] = 0.05
 
         if next_cell is None:
             solution = slam.shortest_path(robot_cell, goal_cell,
@@ -267,6 +268,20 @@ def go_to_input_goal(beh, robot):
 
     print('<< GO-TO-INPUT-GOAL')
 
+def manual_driving(beh, robot):
+
+    print('>> MANUAL-DRIVING')
+
+    SPEED_V = config.NORMAL_DRIVE_SPEED
+    SPEED_W = config.NORMAL_ROTATE_SPEED
+
+    input_v = beh.get_param('v')
+    input_w = beh.get_param('w')
+
+    robot.drive_velocity(input_v, input_w)
+
+    print('<< MANUAL-DRIVING')
+
 def stop_driving(beh, robot):
 
     print('>> STOP-DRIVING')
@@ -296,7 +311,7 @@ def escape_obstacle(beh, robot):
         if beh.is_interrupted():
             break
 
-        if timer.timeup(2):
+        if timer.timeup(3):
             robot.drive_velocity(0, 0)
             break
 
@@ -316,6 +331,7 @@ class Beh(Enum):
     APPROACH_HUMAN = auto()
     ESCAPE_OBSTACLE = auto()
     GO_TO_INPUT_GOAL = auto()
+    MANUAL_DRIVING = auto()
     STOP_DRIVING = auto()
 
 beh_def_list = [\
@@ -323,5 +339,6 @@ beh_def_list = [\
     # (Beh.APPROACH_HUMAN, 200, approach_human),
     (Beh.ESCAPE_OBSTACLE, 999, escape_obstacle),
     (Beh.GO_TO_INPUT_GOAL, 2000, go_to_input_goal),
+    (Beh.MANUAL_DRIVING, 2001, manual_driving),
     (Beh.STOP_DRIVING, 3001, stop_driving)
 ]
