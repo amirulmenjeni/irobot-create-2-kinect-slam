@@ -1992,6 +1992,13 @@ class Robot:
 
         goal_cell = slam.explore_cell(entr_map, robot_cell)
 
+        # Patch so that the robot is not "stuck" when it starts nearby an
+        # obstacle.
+        rv, ru = robot_cell
+        for i in range(rv - kernel_radius, rv + kernel_radius + 1):
+            for j in range(ru - kernel_radius, ru + kernel_radius + 1):
+                grid_map[i, j] = 0.1
+
         solution = slam.shortest_path(robot_cell, goal_cell,\
             grid_map, occu_thres, kernel_radius=kernel_radius)
 
