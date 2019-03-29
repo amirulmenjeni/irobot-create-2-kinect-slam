@@ -693,26 +693,32 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.75,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=10, k=100, tol=1e-3, entropy_thres=0.75):
+def explore_cell(m, robot_cell, min_dist=6, max_dist=20, tol=1e-3,\
+        entropy_thres=0.95):
 
-    assert k >= 1
-    assert type(k) == int
     assert min_dist >= 0
     assert tol > 0
 
     # Find unexplored cell above some entropy threshold. If entropy_thres is
     # less than or equal to 0, then find some explored cell instead.
     if entropy_thres > 0:
-        X = np.argwhere((abs(m - np.max(m)) < tol) & (m > entropy_thres))
+        X = np.argwhere(m > entropy_thres)
     else:
         X = np.argwhere(m < 0.5)
 
-    boundary = [rutil.euclidean_distance(x, robot_cell) > min_dist for x in X]
-    X = X[boundary]
-    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X)
+    k = len(X) // 2
+
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto',\
+            metric='euclidean').fit(X)
     dist, inds = nbrs.kneighbors([robot_cell])
 
-    return X[inds.flatten()[np.random.randint(0, k)]]
+    dist = dist.flatten()
+    inds = inds.flatten()
+
+    dist_inds = np.argwhere((dist > min_dist) & (dist < max_dist)).flatten()
+    
+    r = inds[np.random.choice(dist_inds)]
+    return X[r]
 
 def local_occupancy(cell_dict, out, map_size, resolution):
 
@@ -1100,8 +1106,9 @@ def path_cost(cell, grid_map, occu_thres, kernel_radius):
     for i in range(row - kernel_radius, row + kernel_radius + 1):
         for j in range(col - kernel_radius, col + kernel_radius + 1):
 
-            if grid_map[i, j] >= occu_thres:
-                count += 1
+            if not is_out_of_bound((i, j), grid_map.shape):
+                if grid_map[i, j] >= occu_thres:
+                    count += 1
 
     return (count / ((kernel_radius + 1) ** 2)) + 1
 
