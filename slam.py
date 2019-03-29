@@ -1110,7 +1110,7 @@ def path_cost(cell, grid_map, occu_thres, kernel_radius):
                 if grid_map[i, j] >= occu_thres:
                     count += 1
 
-    return (count / ((kernel_radius + 1) ** 2)) + 1
+    return count
 
 def goal_test(cell, goal, kernel_radius):
 
