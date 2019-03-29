@@ -1082,9 +1082,7 @@ def neighbor_cells(cell, grid_map, occu_thres, kernel_radius):
 
             neighbor = (row + i, col + j)
 
-            if not is_out_of_bound(neighbor, grid_map.shape) and\
-               not is_colliding(neighbor, grid_map, occu_thres, kernel_radius):
-
+            if not is_out_of_bound(neighbor, grid_map.shape):
                 yield neighbor
 
 def is_colliding(cell, grid_map, occu_thres, kernel_radius):
@@ -1098,13 +1096,13 @@ def is_colliding(cell, grid_map, occu_thres, kernel_radius):
                 return True
     return False
 
-def path_cost(cell, grid_map, occu_thres, kernel_radius):
+def path_cost(cell, grid_map, occu_thres, cost_radius):
 
     row, col = cell
     count = 1
 
-    for i in range(row - kernel_radius, row + kernel_radius + 1):
-        for j in range(col - kernel_radius, col + kernel_radius + 1):
+    for i in range(row - cost_radius, row + cost_radius + 1):
+        for j in range(col - cost_radius, col + cost_radius + 1):
 
             if not is_out_of_bound((i, j), grid_map.shape):
                 if grid_map[i, j] >= occu_thres:
@@ -1140,7 +1138,7 @@ def __replace_greater(queue, node):
     return __heapsort(queue)
 
 def shortest_path(start, goal, grid_map, occu_thres,
-        kernel_radius=1, epsilon=4):
+        kernel_radius=1, cost_radius=3, epsilon=4):
 
     """
     A* algorithm to find shortest-path from the starting cell to the goal cell
@@ -1171,7 +1169,7 @@ def shortest_path(start, goal, grid_map, occu_thres,
     
     # Path-cost function.
     g = lambda n : n.parent.g_cost +\
-        path_cost(n.label, grid_map, occu_thres, kernel_radius)
+        path_cost(n.label, grid_map, occu_thres, cost_radius)
 
     # Dynamic weight function.
     N = max(grid_map.shape)
