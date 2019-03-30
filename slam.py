@@ -633,10 +633,12 @@ def update_occupancy_grid_map(m, obs_mat):
 
 def update_human_grid_map(m, obs_mat):
 
-    rows, cols = obs_mat[:, 0].astype(int), obs_mat[:, 1].astype(int)
+    update_occupancy_grid_map(m, obs_mat)
 
-    tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
-    m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
+    # rows, cols = obs_mat[:, 0].astype(int), obs_mat[:, 1].astype(int)
+
+    # tmp = rutil.vec_prob_to_log_odds(m[rows, cols]) + obs_mat[:,2]
+    # m[rows, cols] = rutil.vec_log_odds_to_prob(tmp)
 
 def human_cell_pos(m, pos, thres=0.85):
 
@@ -693,7 +695,7 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.75,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=6, max_dist=20, tol=1e-3,\
+def explore_cell(m, robot_cell, min_dist=15, max_dist=100, tol=1e-3,\
         entropy_thres=0.95):
 
     assert min_dist >= 0
@@ -1082,7 +1084,8 @@ def neighbor_cells(cell, grid_map, occu_thres, kernel_radius):
 
             neighbor = (row + i, col + j)
 
-            if not is_out_of_bound(neighbor, grid_map.shape):
+            if not is_out_of_bound(neighbor, grid_map.shape) and\
+               not is_colliding(neighbor, grid_map, occu_thres, kernel_radius):
                 yield neighbor
 
 def is_colliding(cell, grid_map, occu_thres, kernel_radius):
