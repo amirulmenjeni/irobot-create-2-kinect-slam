@@ -74,6 +74,10 @@ class Kinect:
 
     def get_rgb(self):
 
+        """
+        Returns the 3-dimensional uint8 array of the RGB sensor.
+        """
+
         if self.color_stream_enabled:
             data = self.color_stream.read_frame().get_buffer_as_uint8()
             bgr = np.frombuffer(data, dtype=np.uint8).reshape(480, 640, 3)
@@ -83,6 +87,10 @@ class Kinect:
             return None
 
     def get_depth(self):
+
+        """
+        Returns the depth map in mm.
+        """
 
         data = self.depth_stream.read_frame().get_buffer_as_uint16()
         dmap = np.frombuffer(data, dtype=np.uint16).reshape(480, 640)
@@ -99,14 +107,17 @@ class Kinect:
             for user in frame.users:
 
                 if user.is_new():
+                    print('new user:', user.id)
                     self.user_tracker.start_skeleton_tracking(user.id)
 
                 if user.state == nite2.UserState.NITE_USER_STATE_VISIBLE:
                     users.append(user)
+                elif user.state == nite2.UserState.NITE_USER_STATE_LOST:
+                    print('User {} lost!'.format(user.id))
 
         return users
-
-    def get_users_pos(self):
+    
+    def get_users_pos(self, rgb=None):
 
         users = self.get_users()
         positions = []
@@ -116,13 +127,53 @@ class Kinect:
             cmass = users[i].centerOfMass
             x, y, z = cmass.x, cmass.y, cmass.z
 
+            p1 = users[i].boundingBox.min
+            p2 = users[i].boundingBox.max
+            p1_x, p1_y = int(p1.x), int(p1.y)
+            p2_x, p2_y = int(p2.x), int(p2.y)
+            w = p2_x - p1_x
+            h = p2_y - p1_y
+
             # Ignore erroneous position data where x ~= 0 and z ~= 0.
             if abs(x - 0) >= 1e-6 and abs(z - 0) >= 1e-6:
-                positions.append([z, -x])
 
-        positions = np.array(positions) * 0.1
+                user_state = _nite2.NiteUserState(users[i].state)
+                skel_state = _nite2.NiteSkeletonState(users[i].skeleton.state)
 
-        return positions
+                z_cm = z * 0.1
+                x_cm = x * 0.1
+
+                if rgb is not None:
+
+                    color = (255, 0, 0)
+
+                    if skel_state ==\
+                       _nite2.NiteSkeletonState.NITE_SKELETON_TRACKED:
+
+                        color = (0, 255, 0)
+                    
+                    cv2.rectangle(rgb, (p1_x, p1_y), (p2_x, p2_y), color, 2)
+
+                    cv2.putText(rgb, str((z_cm, -x_cm)) + ' cm',\
+                        (p1_x, (p1_y + h)//2), cv2.FONT_HERSHEY_PLAIN, 1,
+                        (255, 255, 255), 2)
+
+                if users[i].skeleton.state ==\
+                        _nite2.NiteSkeletonState.NITE_SKELETON_TRACKED:
+
+                    ave_conf = 0
+                    for k in range(8, 15):
+                        ave_conf +=\
+                            users[i].skeleton.joints[k].positionConfidence
+                    ave_conf /= 7
+                    cv2.putText(rgb, str(ave_conf),\
+                        (p1_x, p1_y), cv2.FONT_HERSHEY_PLAIN, 1,
+                        (255, 0, 255), 2)
+
+                    if ave_conf > 0.65:
+                        positions.append([z_cm, -x_cm])
+
+        return np.array(positions)
 
     def get_depth_fps(self):
 
@@ -150,7 +201,8 @@ class Kinect:
 
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(img)
 
-            img = (img - min_val) / (max_val - min_val)
+            if min_val < max_val:
+                img = (img - min_val) / (max_val - min_val)
 
             img = img.astype(np.float32)
 
@@ -213,7 +265,7 @@ class Kinect:
 
         """
         Returns X and Y, each of which is a 480x640 array which maps each pixel
-        to their respective world-coordinates in cm.
+        to their respective world-coordinates in mm.
         """
 
         w = depth_map.shape[1]
@@ -252,11 +304,17 @@ if __name__ == '__main__':
         while 1:
             rgb = kin.get_rgb()
 
+            users = kin.get_users_pos()
+            # if len(users) > 0:
+            #     print('users:', len(users))
+
             dmap = kin.get_depth()
-            dimg = Kinect.depth_display(dmap)
+            # dimg = Kinect.depth_display(dmap)
+
+            print(user_pos)
 
             cv2.imshow('Color', rgb)
-            cv2.imshow('Depth', dimg)
+            # cv2.imshow('Depth', dimg)
             cv2.waitKey(150)
 
     except KeyboardInterrupt:
