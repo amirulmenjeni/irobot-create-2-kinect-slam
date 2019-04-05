@@ -1,7 +1,9 @@
 import math
 import numpy as np
+import datetime
 import cv2
 import socket
+import os
 from scipy import ndimage
 
 def rigid_trans_mat3(pose):
@@ -239,6 +241,19 @@ def min_max_normalize(val, min_val, max_val):
 
     r = max_val - min_val
     return (val - min_val) / r
+
+def save_npy(img):
+
+    now = datetime.datetime.now()
+    year, month, day, hr, mn = now.year, now.month, now.day, now.hour,\
+        now.minute
+
+    filename = "./saves/npy/{:04d}{:02d}{:02d}_{:02d}{:02d}.npy".format(\
+        year, month, day, hr, mn)
+
+    np.save(filename, img)
+
+    print(filename, 'saved.')
 
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
 vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)
