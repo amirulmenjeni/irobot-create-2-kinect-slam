@@ -11,8 +11,13 @@ PORT = 9000
 MAP_SIZE = config.GRID_MAP_SIZE
 RGB_SIZE = (120, 160)
 BYTES_MAP = MAP_SIZE[0] * MAP_SIZE[1] * 3
+BYTES_HUM = MAP_SIZE[0] * MAP_SIZE[1] * 3
 SCALE_FACTOR = 2
 AUTO_SAVE_INTERVAL = 60
+
+# Window names.
+GRID_MAP_WINDOW = 'GRID_MAP_WINDOW'
+HUMAN_MAP_WINDOW = 'HUMAN_MAP_WINDOW'
 
 DRIVE_KEYS = ['w', 'a', 's', 'd']
 
@@ -20,6 +25,7 @@ input_cell = (2**32-1, 2**32-1)
 input_key = 0
 
 KEY_F1 = 190
+KEY_F2 = 191
 KEY_SPACE = 32
 KEY_ESC = 27
 
@@ -48,6 +54,8 @@ def on_release(key):
             input_key = KEY_ESC
         elif key == Key.f1:
             input_key = KEY_F1
+        elif key == Key.f2:
+            input_key = KEY_F2
 
     print('input key:', input_key)
 
@@ -66,8 +74,8 @@ def save_map_image(map_image):
 
     print(filename, 'saved.')
 
-cv2.namedWindow('Display')
-cv2.setMouseCallback('Display', on_mouse, None)
+cv2.namedWindow(GRID_MAP_WINDOW)
+cv2.setMouseCallback(GRID_MAP_WINDOW, on_mouse, None)
 
 # Collect events.
 listener = Listener(on_release=on_release)
@@ -85,7 +93,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, PORT))
     f = config.MAP_SCALE_FACTOR
 
-    cv2.imshow('Display', np.full((30, 30), 0))
+    cv2.imshow(GRID_MAP_WINDOW, np.full((30, 30), 0))
     cv2.waitKey(10)
 
     try:
@@ -96,10 +104,15 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
             try:
                 data = b''
-                while len(data) != BYTES_MAP:
+                while len(data) != (BYTES_MAP + BYTES_HUM):
                     data += s.recv(4096)
-                map_img = np.frombuffer(data, np.uint8)
+
+                map_img = np.frombuffer(data, np.uint8)[:BYTES_MAP]
                 map_img = map_img.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
+
+                hum_img = np.frombuffer(\
+                        data, np.uint8)[BYTES_MAP:BYTES_MAP+BYTES_HUM]
+                hum_img = hum_img.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
 
                 # Send input data.
                 snd = 0
@@ -129,8 +142,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 new_h = map_img.shape[0] * SCALE_FACTOR
                 map_img = cv2.resize(map_img, (new_h, new_w),
                     interpolation=cv2.INTER_AREA)
+                hum_img = cv2.resize(hum_img, (new_h, new_w),
+                    interpolation=cv2.INTER_AREA)
 
-                cv2.imshow('Display', map_img)
+                cv2.imshow(GRID_MAP_WINDOW, map_img)
+                cv2.imshow(HUMAN_MAP_WINDOW, hum_img)
                 cv2.waitKey(100)
 
             except socket.error:
