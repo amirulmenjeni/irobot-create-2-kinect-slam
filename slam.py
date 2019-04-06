@@ -1140,6 +1140,13 @@ def __replace_greater(queue, node):
 
     return __heapsort(queue)
 
+def exploration_path_frontier_cell(grid_map, path):
+
+    for i in range(len(path)):
+        if abs(grid_map[path[i]] - 0.5) < 1e-6:
+            return path[i]
+    return None
+
 def shortest_path(start, goal, grid_map, occu_thres,
         kernel_radius=1, cost_radius=3, epsilon=4):
 
@@ -1154,9 +1161,19 @@ def shortest_path(start, goal, grid_map, occu_thres,
     @param grid_map:
         The occupancy grid map representing the occupancy probability of each
         cell on the map.
-    @occ_thres:
+    @param occu_thres:
         The threshold occupancy value, the minimum probability value of a cell
         to be labeled as occupied.
+    @param kernel_radius:
+        The radius of the robot represented in units of cells.
+    @param cost_radius:
+        The radius within which the past cost function use to count the number
+        of neighboring obstacles.
+    @param epsilon:
+        The constant value for weighted A* search such that the solution
+        returned shall be no worse than (1 + epsilon) times the optimal solution
+        path. When this is set to 0, the solution is be the optimal solution
+        such as that returned by a classical A* search algorithm.
     """
 
     goal = tuple(goal)
