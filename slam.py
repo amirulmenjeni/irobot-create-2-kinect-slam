@@ -695,7 +695,8 @@ def nearest_unexplored_cell(m, robot_cell, min_dist=6, unexplored_thres=0.75,\
 
     return X[inds.flatten()[np.random.randint(0, k)]]
 
-def explore_cell(m, robot_cell, min_dist=15, max_dist=100, tol=1e-3,\
+def explore_cell(m, robot_cell, resolution,\
+        min_dist=150, max_dist=1000, tol=1e-3,\
         entropy_thres=0.95):
 
     assert min_dist >= 0
@@ -716,6 +717,8 @@ def explore_cell(m, robot_cell, min_dist=15, max_dist=100, tol=1e-3,\
 
     dist = dist.flatten()
     inds = inds.flatten()
+
+    dist = resolution * dist
 
     dist_inds = np.argwhere((dist > min_dist) & (dist < max_dist)).flatten()
     

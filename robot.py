@@ -2030,7 +2030,8 @@ class Robot:
         grid_map = np.copy(self.fast_slam.highest_particle().m)
         entr_map = slam.entropy_map(grid_map)
 
-        goal_cell = slam.explore_cell(entr_map, robot_cell)
+        goal_cell = slam.explore_cell(entr_map, robot_cell,\
+            config.GRID_MAP_RESOLUTION)
 
         # Patch so that the robot is not "stuck" when it starts nearby an
         # obstacle.
@@ -2041,12 +2042,12 @@ class Robot:
 
         solution = slam.shortest_path(robot_cell, goal_cell,\
             grid_map, occu_thres, kernel_radius=kernel_radius,\
-            cost_radius=cost_radius)
+            cost_radius=cost_radius, epsilon=0)
 
         if len(solution) == 0:
             # Set an explored cell as the goal cell.
             goal_cell = slam.explore_cell(\
-                entr_map, robot_cell,\
+                entr_map, robot_cell, config.GRID_MAP_RESOLUTION,\
                 entropy_thres=0)
             solution = slam.shortest_path(robot_cell, goal_cell,\
                 grid_map, occu_thres, kernel_radius=kernel_radius)
