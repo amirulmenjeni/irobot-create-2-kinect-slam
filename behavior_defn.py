@@ -25,10 +25,11 @@ def approach_human(beh, robot):
     MAP_SIZE = config.GRID_MAP_SIZE
     RESOLUTION = config.GRID_MAP_RESOLUTION
     SPEED = config.NORMAL_DRIVE_SPEED
+    ROTATE_SPEED = config.NORMAL_ROTATE_SPEED
     DELTA_TIME = config.CONTROL_DELTA_TIME
 
     CELL_STEPS = 3
-    RADIUS_TOL = 50
+    RADIUS_TOL = 150
 
     goal_cell = None
     next_cell = None
@@ -36,6 +37,8 @@ def approach_human(beh, robot):
     flag_approached = False
 
     while True:
+
+        robot.wait_motion_update()
 
         robot_cell = robot.get_cell_pos()
         best_particle = robot.fast_slam.highest_particle()
@@ -94,33 +97,30 @@ def approach_human(beh, robot):
             turn_radius = robot.inverse_drive_kinematic(next_pos)
             robot.drive_radius(SPEED, turn_radius)
 
-        time.sleep(DELTA_TIME)
+    if flag_approached:
 
-    # if flag_approached:
+        # Orient the robot to face the human once it has approached the human.
+        while True:
 
-    #     # Orient the robot to face the human once it has approached the human.
-    #     while True:
+            robot.wait_motion_update()
 
-    #         best_particle = robot.fast_slam.highest_particle()
-    #         pose = best_particle.x
+            best_particle = robot.fast_slam.highest_particle()
+            pose = best_particle.x
 
-    #         dir_vec = rutil.direction_vector(pose[:2], goal_pos)
-    #         hdg_vec = rutil.angle_to_dir(pose[2])
+            dir_vec = rutil.direction_vector(pose[:2], goal_pos)
+            hdg_vec = rutil.angle_to_dir(pose[2])
 
-    #         heading_diff = rutil.angle_error(hdg_vec, dir_vec)
+            heading_diff = rutil.angle_error(hdg_vec, dir_vec)
 
-    #         w = 0.0873 * math.sin(abs(heading_diff) / 2.0)
+            w = ROTATE_SPEED * math.sin(abs(heading_diff) / 2.0)
 
-    #         if heading_diff > 0:
-    #             robot.drive_velocity(0, +w)
-    #         elif heading_diff < 0:
-    #             robot.drive_velocity(0, -w)
+            if heading_diff > 0:
+                robot.drive_velocity(0, +w)
+            elif heading_diff < 0:
+                robot.drive_velocity(0, -w)
 
-    #         if abs(heading_diff) < 0.043633:
-    #             break
-
-    #         time.sleep(DELTA_TIME)
-
+            if abs(heading_diff) < 0.043633:
+                break
 
     print('<< APPROACH-HUMAN')
 
@@ -140,6 +140,9 @@ def explore(beh, robot):
 
     CELL_STEPS = 3
     RADIUS_TOL = 15
+
+    # The first unexplored cell found in the solution path.
+    frontier_cell = None
 
     goal_cell = None
     next_cell = None
@@ -166,18 +169,25 @@ def explore(beh, robot):
         #         grid_map[i, j] = 0.1
 
         if (next_cell is None) or (goal_cell is None):
+
             goal_cell, solution = robot.plan_explore(KERNEL_RADIUS, COST_RADIUS)
-            robot.goal_cell = goal_cell
+
+            # Get the cell on the solution that is an unexplored cell.
+            frontier_cell = slam.exploration_path_frontier_cell(
+                grid_map, solution)
+
+            robot.goal_cell = frontier_cell
             robot.current_solution = solution
         else:
             if slam.goal_test(robot_cell, next_cell, KERNEL_RADIUS):
                 solution = slam.shortest_path(robot_cell, goal_cell,\
                     grid_map, OCCU_THRES, kernel_radius=KERNEL_RADIUS,\
                     cost_radius=COST_RADIUS)
+                frontier_cell = slam.exploration_path_frontier_cell(
+                    grid_map, solution)
+                robot.goal_cell = frontier_cell
                 robot.current_solution = solution
-
-        goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
-
+        
         try:
             if CELL_STEPS - 1 < len(solution):
                 next_cell = solution[CELL_STEPS - 1]
@@ -188,8 +198,16 @@ def explore(beh, robot):
             next_cell = None
             continue
 
+        goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
+
+        if frontier_cell is not None:
+            dist = rutil.euclidean_distance(frontier_cell, robot_cell)
+            if RESOLUTION * dist < 100:
+                beh.continue_to(robot.behaviors[Beh.SCAN_360])
+                return
+
         if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
-            robot.test_song()
+            print('Reached goal (within circle radius).')
             robot.goal_cell = None
             return
         else:
@@ -200,6 +218,37 @@ def explore(beh, robot):
         time.sleep(DELTA_TIME)
 
     print('<< EXPLORE')
+
+def scan_360(beh, robot):
+
+    print('>> SCAN-360')
+
+    ROTATE_SPEED = config.NORMAL_ROTATE_SPEED
+    DELTA_TIME = config.CONTROL_DELTA_TIME
+    
+    robot.drive_velocity(0, 0)
+    time.sleep(0.5)
+    robot.drive_velocity(0, ROTATE_SPEED)
+
+    total_angle = 0
+
+    timer = Timer()
+
+    while True:
+
+        robot.wait_motion_update()
+
+        if beh.is_interrupted():
+            robot.drive_velocity(0, 0)
+            break
+
+        if total_angle > 2*math.pi:
+            robot.drive_velocity(0, 0)
+            break
+
+        total_angle += abs(robot.get_delta_angle())
+
+    print('<< SCAN-360')
 
 def go_to_input_goal(beh, robot):
 
@@ -222,6 +271,8 @@ def go_to_input_goal(beh, robot):
     solution = []
 
     while True:
+
+        robot.wait_motion_update()
 
         if beh.is_interrupted():
             print('INTERRUPTED')
@@ -277,7 +328,6 @@ def go_to_input_goal(beh, robot):
             turn_radius = robot.inverse_drive_kinematic(next_pos)
             robot.drive_radius(SPEED, turn_radius)
 
-        time.sleep(DELTA_TIME)
 
     print('<< GO-TO-INPUT-GOAL')
 
@@ -346,10 +396,12 @@ class Beh(Enum):
     GO_TO_INPUT_GOAL = auto()
     MANUAL_DRIVING = auto()
     STOP_DRIVING = auto()
+    SCAN_360 = auto()
 
 beh_def_list = [\
     (Beh.EXPLORE, 0, explore),
     (Beh.APPROACH_HUMAN, 200, approach_human),
+    (Beh.SCAN_360, 300, scan_360),
     (Beh.ESCAPE_OBSTACLE, 999, escape_obstacle),
     (Beh.GO_TO_INPUT_GOAL, 2000, go_to_input_goal),
     (Beh.MANUAL_DRIVING, 2001, manual_driving),
