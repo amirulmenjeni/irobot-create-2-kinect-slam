@@ -1,7 +1,6 @@
 import serial
 import sys
 import time
-import datetime
 import struct
 import threading
 import math
@@ -69,6 +68,7 @@ DRIVE_RADIUS_CLOCKWISE = 65535
 
 # Keyboard keys.
 KEY_SPACE = ord(' ')
+KEY_F2 = 191
 KEY_ESC = 27
 KEY_W = 119
 KEY_A = 97
@@ -380,6 +380,8 @@ class Robot:
         self.__w = 0
         self.__delta_distance = 0
         self.__delta_angle = 0
+        self.__motion_update_counter_ = 0
+        self.__motion_update_counter = 0
 
         # Kinematics variables.
         self.max_speed = max_speed # in cm/s
@@ -415,9 +417,8 @@ class Robot:
              1: '111',
              2: '000'}) # Plot number 2 is not drawn
 
-        self.__is_timestep_end = False
-
-        self.kin = Kinect(config.PRIMESENSE_REDIST_PATH)
+        self.kin = Kinect(config.PRIMESENSE_REDIST_PATH,\
+            enable_color_stream=False)
 
         ###################################################
         # Status.
@@ -474,7 +475,11 @@ class Robot:
         self.__manual_w = 0
         self.__client_keyboard = 0
         self.__display_map = np.full(\
-            (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255, np.uint8)
+            (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255,\
+            np.uint8)
+        self.__display_human_map = np.full(\
+            (config.GRID_MAP_SIZE[0], config.GRID_MAP_SIZE[1], 3), 255,\
+            np.uint8)
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
         logging.info('Battery percentage on startup: {0}'.format(\
@@ -936,6 +941,13 @@ class Robot:
                     except BrokenPipeError as e:
                         print(e)
 
+                    # Send human map data to client.
+                    data = self.__display_human_map.tobytes()
+                    try:
+                        conn.sendall(data)
+                    except BrokenPipeError as e:
+                        print(e)
+
                     # Get input data from client.
                     data = b''
                     while len(data) != 12:
@@ -954,12 +966,12 @@ class Robot:
 
         while 1:
 
-            while self.z_t is not None:
-                time.sleep(1e-6)
+            # while self.z_t is not None:
+            #     time.sleep(1e-6)
 
             # The x-y-locations of obstacles projected from kinect's depth.
             depth_map = self.kin.get_depth()
-            self.z_t = self.kin.depth_map_to_world(depth_map, slice_row=240)
+            self.z_t = self.kin.depth_map_to_world(depth_map, clean=True)
 
             end_cells = slam.world_frame_to_cell_pos(self.z_t,\
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
@@ -997,6 +1009,8 @@ class Robot:
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
             slam.update_human_grid_map(self.hum_grid_map, obs_mat)
+
+            time.sleep(0.0333)
 
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
@@ -1064,6 +1078,9 @@ class Robot:
             self.u_t = [delta_distance, self.__delta_angle]
 
             self.__update_odometry(delta_distance, self.__delta_angle)
+
+            self.__motion_update_counter =\
+                (self.__motion_update_counter + 1) % 1000
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
@@ -1556,6 +1573,12 @@ class Robot:
             go_to_goal.input_param({ 'goal-cell': (y // f, x // f) })
             go_to_goal.send_request()
 
+    def wait_motion_update(self):
+
+        while self.__motion_update_counter == self.__motion_update_counter_:
+            time.sleep(1e-5)
+        self.__motion_update_counter_ = self.__motion_update_counter
+
     def run(self, show_display=False, disable_auto=False):
 
         self.__init_threads()
@@ -1564,6 +1587,10 @@ class Robot:
 
         try:
             while True:
+
+                if self.__client_keyboard == KEY_F2:
+                    best_particle = self.fast_slam.highest_particle()
+                    rutil.save_npy(best_particle.m)
 
                 self.__update_behavior(disable_auto)
                 self.__update_display(show_display)
@@ -1587,6 +1614,10 @@ class Robot:
         # Sensor readings.
         nearest_human = self.get_nearest_human()
 
+        for _ in range(self.arbiter.next_queue.qsize()):
+            beh = self.arbiter.next_queue.get()
+            beh.send_request()
+
         if self.__client_keyboard == KEY_ESC:
             self.clean_up()
 
@@ -1600,8 +1631,11 @@ class Robot:
                 # sensor value.
                 print('Error getting PKT_BUMP')
 
-            # if nearest_human is not None:
-            #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
+            if nearest_human is not None:
+                self.nearest_human = nearest_human
+                self.behaviors[Beh.APPROACH_HUMAN].send_request()
+            else:
+                self.nearest_human = None
 
             self.behaviors[Beh.EXPLORE].send_request()
 
@@ -1666,7 +1700,7 @@ class Robot:
         if self.goal_cell is not None:
             imdraw.draw_square(map_image,
                     RESOLUTION, self.goal_cell,
-                    (255, 0, 0), width=1, pos_cell=True)
+                    (255, 0, 0), width=3, pos_cell=True)
 
         for cell in self.current_solution:
             imdraw.draw_square(map_image,
@@ -1681,19 +1715,29 @@ class Robot:
 
         # Draw robot pose.
         imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-            best_particle.x, bgr=(0, 153, 0), radius=1,
+            best_particle.x, bgr=(0, 153, 0), radius=2,
+            show_heading=True, heading_thickness=2,
+            border_thickness=1,
+            border_bgr=(0, 51, 25))
+
+        imdraw.draw_robot(hum_image, config.GRID_MAP_RESOLUTION,
+            best_particle.x, bgr=(0, 153, 0), radius=2,
             show_heading=True, heading_thickness=2,
             border_thickness=1,
             border_bgr=(0, 51, 25))
 
         self.__display_map = map_image
+        self.__display_human_map = hum_image
 
         if not self.__conn_ssh and show_display:
+
             f = config.MAP_SCALE_FACTOR
             new_shape = map_image.shape[1]*f, map_image.shape[0]*f
             map_image = cv2.resize(map_image, new_shape,
                 interpolation=cv2.INTER_AREA)
+
             cv2.imshow(WINDOW_MAP, map_image)
+            cv2.imshow('Human Map', hum_image)
                 
     def display(self):
 
@@ -1834,10 +1878,6 @@ class Robot:
 
             if self.is_thread_stop_requested[THREAD_MOTION]:
                 break
-
-    def wait_for_next_timestep(self):
-        while not self.__is_timestep_end:
-            time.sleep(0.01)
 
     def halt(self):
 
@@ -1982,7 +2022,7 @@ class Robot:
         return slam.world_to_cell_pos(best_particle.x[:2],\
             config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
 
-    def plan_explore(self, kernel_radius):
+    def plan_explore(self, kernel_radius, cost_radius):
 
         robot_cell = self.get_cell_pos()
         occu_thres = config.OCCU_THRES
@@ -2000,7 +2040,8 @@ class Robot:
                 grid_map[i, j] = 0.1
 
         solution = slam.shortest_path(robot_cell, goal_cell,\
-            grid_map, occu_thres, kernel_radius=kernel_radius)
+            grid_map, occu_thres, kernel_radius=kernel_radius,\
+            cost_radius=cost_radius)
 
         if len(solution) == 0:
             # Set an explored cell as the goal cell.
