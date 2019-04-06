@@ -1,5 +1,6 @@
 import threading
 import time
+import queue
 
 class Arbiter():
 
@@ -13,6 +14,7 @@ class Arbiter():
         self.current_behavior = None
         self.__timer = Timer()
         self.__is_locked = False
+        self.next_queue = queue.Queue()
 
         Arbiter.arbiters.append(self)
         Arbiter.arb_count += 1
@@ -123,6 +125,10 @@ class Behavior():
         """
 
         self.__arbiter.receive_request(self)
+
+    def continue_to(self, behavior):
+
+        self.__arbiter.next_queue.put(behavior)
 
     def get_name(self):
         return self.__name
