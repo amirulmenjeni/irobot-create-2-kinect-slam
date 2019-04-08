@@ -46,6 +46,12 @@ class ParticleFilter:
                 range(num_particles)]
         self.deltatime = deltatime
 
+    def normalize_weights(particles):
+
+        total = sum([p.w for p in particles])
+        for p in particles:
+            p.w = p.w / total
+
     def update(self, z, u, x, m, occ_thres=0.75):
 
         """
@@ -250,18 +256,18 @@ class FastSLAM:
             if p.path[-1] != cell:
                 p.path.append(cell)
 
-            H = rutil.rigid_trans_mat3(p.x)
-            z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
-                    self.RESOLUTION)
-
             # Correction step: Compute the weight of this particle.
-            p.w = likelihood_field_measurement_model(z_cells, p.x,\
+            p.w = likelihood_field_measurement_model(np.copy(z_cells), p.x,\
                     np.argwhere(p.m > occu_thres),\
                     self.MAP_SIZE, self.RESOLUTION)
 
             if p.w > max_weight:
                 max_weight = p.w
                 max_particle_index = i
+
+            H = rutil.rigid_trans_mat3(p.x)
+            z_cells = rutil.transform_cells_2d(H, z_cells, self.MAP_SIZE,
+                    self.RESOLUTION)
 
             z_mat[:,:2] = z_cells
 
@@ -271,10 +277,14 @@ class FastSLAM:
         self.best_particle = max_particle_index
 
         # Effective sample size.
-        ess = self.M / (1 + ParticleFilter.cv(self.particles))
+        # ess = len(self.particles) / (1 + ParticleFilter.cv(self.particles))
+        # if ess < 0.5 * len(self.particles):
 
-        if ess < 0.5 * self.M:
-            self.particles = ParticleFilter.low_variance_sampler(self.particles)
+        # Normalize weights.
+        ParticleFilter.normalize_weights(self.particles)
+        
+        # Resample.
+        self.particles = ParticleFilter.low_variance_sampler(self.particles)
 
     def highest_particle(self):
         return self.particles[self.best_particle]
@@ -950,11 +960,19 @@ def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
     dist, inds = nbrs.kneighbors(occ_cells)
 
-    ave_min_dist = 0
-    for d in dist[0]:
-        ave_min_dist += d
+    # ave_min_dist = 0
+    # for d in dist[0]:
+    #     ave_min_dist += d
+    # q =  np.exp(-ave_min_dist / len(dist))
+    # print('q:', q)
+    # return  q
 
-    return np.exp(-ave_min_dist / len(dist))
+    q = 1
+    for d in dist[0]:
+        q = q * (0.95* prob_normal_distribution(d, 1) + 0.05)
+        
+    # print('q:', q)
+    return q
 
 def correlation_measurement_model(obsr_mat, grid_map, resolution):
 
