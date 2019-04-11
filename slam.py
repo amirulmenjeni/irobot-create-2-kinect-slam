@@ -274,14 +274,14 @@ class FastSLAM:
             # Update the map of each particle.
             update_occupancy_grid_map(p.m, z_mat)
 
-        self.best_particle = max_particle_index
-
         # Effective sample size.
         # ess = len(self.particles) / (1 + ParticleFilter.cv(self.particles))
         # if ess < 0.5 * len(self.particles):
 
         # Normalize weights.
         ParticleFilter.normalize_weights(self.particles)
+
+        self.best_particle = max_particle_index
         
         # Resample.
         self.particles = ParticleFilter.low_variance_sampler(self.particles)
@@ -730,9 +730,11 @@ def explore_cell(m, robot_cell, resolution,\
 
     dist = resolution * dist
 
+    print('distances:', len(dist))
     dist_inds = np.argwhere((dist > min_dist) & (dist < max_dist)).flatten()
     
     r = inds[np.random.choice(dist_inds)]
+
     return X[r]
 
 def local_occupancy(cell_dict, out, map_size, resolution):
@@ -969,7 +971,7 @@ def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
     q = 1
     for d in dist[0]:
-        q = q * (0.95* prob_normal_distribution(d, 1) + 0.05)
+        q = q * (0.999* prob_normal_distribution(d, 1) + 0.001)
         
     # print('q:', q)
     return q
@@ -1124,13 +1126,15 @@ def path_cost(cell, grid_map, occu_thres, cost_radius):
 
     row, col = cell
     count = 1
+    e = 1e-3
 
     for i in range(row - cost_radius, row + cost_radius + 1):
         for j in range(col - cost_radius, col + cost_radius + 1):
 
             if not is_out_of_bound((i, j), grid_map.shape):
                 if grid_map[i, j] >= occu_thres:
-                    count += 1
+                    val = rutil.euclidean_distance(cell, (i, j))
+                    count += 1 / (1 + math.exp(-val))
 
     return count
 
