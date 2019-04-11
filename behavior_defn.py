@@ -170,6 +170,7 @@ def explore(beh, robot):
 
         if (next_cell is None) or (goal_cell is None):
 
+            robot.drive_velocity(0, 0)
             goal_cell, solution = robot.plan_explore(KERNEL_RADIUS, COST_RADIUS)
 
             # Get the cell on the solution that is an unexplored cell.
@@ -327,7 +328,6 @@ def go_to_input_goal(beh, robot):
             next_pos = slam.cell_to_world_pos(next_cell, MAP_SIZE, RESOLUTION)
             turn_radius = robot.inverse_drive_kinematic(next_pos)
             robot.drive_radius(SPEED, turn_radius)
-
 
     print('<< GO-TO-INPUT-GOAL')
 
