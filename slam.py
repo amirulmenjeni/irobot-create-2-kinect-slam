@@ -971,9 +971,8 @@ def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
     q = 1
     for d in dist[0]:
-        q = q * (0.999* prob_normal_distribution(d, 1) + 0.001)
+        q = q * (0.999*prob_normal_distribution(d, 1) + 0.001)
         
-    # print('q:', q)
     return q
 
 def correlation_measurement_model(obsr_mat, grid_map, resolution):
@@ -1213,8 +1212,8 @@ def shortest_path(start, goal, grid_map, occu_thres,
     h = lambda n: rutil.euclidean_distance(n.label, goal)
     
     # Path-cost function.
-    g = lambda n : n.parent.g_cost +\
-        path_cost(n.label, grid_map, occu_thres, cost_radius)
+    g = lambda n : n.parent.g_cost + 1
+        # path_cost(n.label, grid_map, occu_thres, cost_radius)
 
     # Dynamic weight function.
     N = max(grid_map.shape)
