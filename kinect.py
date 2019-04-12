@@ -26,6 +26,8 @@ class Kinect:
     MAX_RANGE = 2**12 - 1
     MIN_DEPTH_MM = 600
     MAX_DEPTH_MM = 8000
+    X_MULT = 1.12032
+    Y_MULT = 0.84024
 
     def __init__(self, redist, video_shape=(480, 640), depth_shape=(480, 640),
             enable_color_stream=False):
@@ -166,6 +168,11 @@ class Kinect:
                         ave_conf +=\
                             users[i].skeleton.joints[k].positionConfidence
                     ave_conf /= 7
+
+                    print('User {} tracked with {} confidence.'.format(\
+                            users[i].id, ave_conf
+                        ))
+
                     cv2.putText(rgb, str(ave_conf),\
                         (p1_x, p1_y), cv2.FONT_HERSHEY_PLAIN, 1,
                         (255, 0, 255), 2)
@@ -245,13 +252,12 @@ class Kinect:
         world_xyz = []
 
         for u in range(self.depth_w):
-            if Kinect.MIN_DEPTH_MM < depth_slice[0][u] < Kinect.MAX_DEPTH_MM:
+            if depth_slice[0][u] < Kinect.MAX_DEPTH_MM:
                 xyz = openni2.convert_depth_to_world(\
                     self.depth_stream, u, 0, depth_slice[0][u])
                 world_xyz.append(xyz)
 
         world_xyz = np.array(world_xyz)
-
         obstacles_xy = np.full((1, 2), 0)
 
         if len(world_xyz) > 0:
@@ -273,18 +279,11 @@ class Kinect:
 
         i, j = np.mgrid[:h, :w]
 
-        # Constants multiplier to get world x- and y-coordinates.
-        X_MULT = 1.12032
-        Y_MULT = 0.84024
-
         j_norm = j / w
         i_norm = i / h
 
-        X = +(j_norm - 0.5) * X_MULT * depth_map
-        Y = -(i_norm - 0.5) * Y_MULT * depth_map
-
-        # X = +(j - (w / 2)) * (320 / w) * X_MULT * depth_map * 0.001
-        # Y = -(i - (h / 2)) * (240 / h) * Y_MULT * depth_map * 0.001
+        X = +(j_norm - 0.5) * Kinect.X_MULT * depth_map
+        Y = -(i_norm - 0.5) * Kinect.Y_MULT * depth_map
 
         return X, Y
 
