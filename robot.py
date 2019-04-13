@@ -449,6 +449,8 @@ class Robot:
         self.goal_cell = None
         self.nearest_human = None
         self.current_solution = []
+        self.__distance_traveled = 0
+        self.scan_locations = []
 
         ###################################################
         # Behavior based robotic.
@@ -1015,35 +1017,6 @@ class Robot:
             if self.is_thread_stop_requested[THREAD_KINECT]:
                 break
 
-    def thread_main(self):
-
-        time.sleep(3)
-
-        while True:
-
-            # Sensor readings.
-            nearest_human = self.get_nearest_human()
-
-            # try:
-            #     lbump, rbump = self.get_sensor(PKT_BUMP)
-            #     if lbump or rbump:
-            #         self.behaviors[Beh.ESCAPE_OBSTACLE].send_request()
-            # except TypeError:
-            #     # Unable to unpack sensor data: Error in getting the sensor
-            #     # value.
-            #     print('Error getting PKT_BUMP')
-            #     pass
-
-            if len(nearest_human) > 0:
-                pass
-
-            self.behaviors[Beh.EXPLORE].send_request()
-
-            time.sleep(0.1)
-
-            if self.is_thread_stop_requested[THREAD_MAIN]:
-                break
-
     def thread_motion5(self):
 
         while True:
@@ -1073,6 +1046,8 @@ class Robot:
 
             self.__delta_distance = delta_distance
             self.__delta_angle = math.radians(delta_angle)
+
+            self.__distance_traveled += abs(delta_distance)
 
             # Use the odometry measurement as the "control".
             self.u_t = [delta_distance, self.__delta_angle]
@@ -1587,9 +1562,10 @@ class Robot:
 
         try:
             while True:
+                
+                best_particle = self.fast_slam.highest_particle()
 
                 if self.__client_keyboard == KEY_F2:
-                    best_particle = self.fast_slam.highest_particle()
                     rutil.save_npy(best_particle.m)
 
                 self.__update_behavior(disable_auto)
@@ -1614,6 +1590,8 @@ class Robot:
         # Sensor readings.
         nearest_human = self.get_nearest_human()
 
+        best_particle = self.fast_slam.highest_particle()
+
         for _ in range(self.arbiter.next_queue.qsize()):
             beh = self.arbiter.next_queue.get()
             beh.send_request()
@@ -1631,11 +1609,11 @@ class Robot:
                 # sensor value.
                 print('Error getting PKT_BUMP')
 
-            if nearest_human is not None:
-                self.nearest_human = nearest_human
-                self.behaviors[Beh.APPROACH_HUMAN].send_request()
-            else:
-                self.nearest_human = None
+            # if nearest_human is not None:
+            #     self.nearest_human = nearest_human
+            #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
+            # else:
+            #     self.nearest_human = None
 
             self.behaviors[Beh.EXPLORE].send_request()
 
@@ -1713,7 +1691,11 @@ class Robot:
         #                 config.GRID_MAP_RESOLUTION, step,
         #                 (0, 255, 0), width=1, pos_cell=True)
 
-        # Draw robot pose.
+        for cell in self.scan_locations:
+            imdraw.draw_square(map_image, RESOLUTION, cell, (0,0,255),
+                width=2, pos_cell=True)
+
+        # # Draw robot pose.
         imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
             best_particle.x, bgr=(0, 153, 0), radius=2,
             show_heading=True, heading_thickness=2,
@@ -2015,6 +1997,30 @@ class Robot:
         best_particle = self.fast_slam.highest_particle()
         return best_particle.x
 
+    def get_distance_traveled(self):
+
+        return self.__distance_traveled
+
+    def get_nearest_scanned_location(self):
+
+        # Initially the robot is expected to do a scan.
+        assert len(self.scan_locations) > 0
+
+        min_dist = +math.inf
+        nearest = self.scan_locations[0]
+
+        for cell in self.scan_locations:
+            dist = rutil.euclidean_distance(cell, self.get_cell_pos())
+            if min_dist > dist:
+                min_dist = dist
+                nearest = cell
+
+        return cell
+
+    def reset_distance_traveled(self):
+
+        self.__distance_traveled = 0
+
     def get_cell_pos(self):
 
         best_particle = self.fast_slam.highest_particle()
@@ -2042,13 +2048,13 @@ class Robot:
 
         solution = slam.shortest_path(robot_cell, goal_cell,\
             grid_map, occu_thres, kernel_radius=kernel_radius,\
-            cost_radius=cost_radius, epsilon=0)
+            cost_radius=cost_radius, epsilon=4)
 
         if len(solution) == 0:
             # Set an explored cell as the goal cell.
             goal_cell = slam.explore_cell(\
                 entr_map, robot_cell, config.GRID_MAP_RESOLUTION,\
-                entropy_thres=0)
+                entropy_thres=1)
             solution = slam.shortest_path(robot_cell, goal_cell,\
                 grid_map, occu_thres, kernel_radius=kernel_radius)
 
