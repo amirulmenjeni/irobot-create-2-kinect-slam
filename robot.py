@@ -1022,6 +1022,9 @@ class Robot:
             delta_distance, delta_angle = 0, 0
             self.get_sensor(PKT_MOTION)
 
+            # Update z_t.
+            self.__update_kinect_measurements()
+
             # Update fastSLAM particles when u_t is not static and when we have
             # observation z_t.
             if self.z_t is not None and self.u_t is not None and\
@@ -1047,9 +1050,6 @@ class Robot:
 
             # Update u_t. Use the odometry measurement as the "control".
             self.u_t = [delta_distance, self.__delta_angle]
-
-            # update z_t.
-            self.__update_kinect_measurements()
 
             # Update odometry position using dead reckoning.
             self.__update_odometry(delta_distance, self.__delta_angle)
@@ -2060,7 +2060,7 @@ class Robot:
             # Set an explored cell as the goal cell.
             goal_cell = slam.explore_cell(\
                 entr_map, robot_cell, config.GRID_MAP_RESOLUTION,\
-                entropy_thres=1)
+                entropy_thres=0.95)
             solution = slam.shortest_path(robot_cell, goal_cell,\
                 grid_map, occu_thres, kernel_radius=kernel_radius)
 

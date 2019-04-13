@@ -730,7 +730,6 @@ def explore_cell(m, robot_cell, resolution,\
 
     dist = resolution * dist
 
-    print('distances:', len(dist))
     dist_inds = np.argwhere((dist > min_dist) & (dist < max_dist)).flatten()
     
     r = inds[np.random.choice(dist_inds)]
@@ -1133,7 +1132,7 @@ def path_cost(cell, grid_map, occu_thres, cost_radius):
             if not is_out_of_bound((i, j), grid_map.shape):
                 if grid_map[i, j] >= occu_thres:
                     val = rutil.euclidean_distance(cell, (i, j))
-                    count += 1 / (1 + math.exp(-val))
+                    count += 1 / (val**2 + val - 10)
 
     return count
 
@@ -1212,8 +1211,8 @@ def shortest_path(start, goal, grid_map, occu_thres,
     h = lambda n: rutil.euclidean_distance(n.label, goal)
     
     # Path-cost function.
-    g = lambda n : n.parent.g_cost + 1
-        # path_cost(n.label, grid_map, occu_thres, cost_radius)
+    g = lambda n : n.parent.g_cost +\
+            path_cost(n.label, grid_map, occu_thres, cost_radius)
 
     # Dynamic weight function.
     N = max(grid_map.shape)
