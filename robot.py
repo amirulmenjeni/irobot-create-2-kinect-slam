@@ -52,9 +52,8 @@ PKT_BYTES[PKT_DISTANCE] = 2
 PKT_BYTES[PKT_ANGLE]    = 2
 
 # Threads
-THREAD_MOTION = 0
-THREAD_KINECT = 1
-THREAD_MAIN = 2
+THREAD_SLAM = 0
+THREAD_SENSE_HUMAN = 1
 
 MOTION_STATIC = 0
 MOTION_EXPLORE = 1
@@ -537,10 +536,10 @@ class Robot:
         """
 
         self.threads = [
-                threading.Thread(target=Robot.thread_motion5, args=(self,),\
-                name='Motion'),\
-                threading.Thread(target=Robot.thread_kinect, args=(self,),\
-                name='Kinect'),\
+                threading.Thread(target=Robot.thread_slam, args=(self,),\
+                name='SLAM'),\
+                threading.Thread(target=Robot.thread_sense_human, args=(self,),\
+                name='SenseHuman'),\
                 threading.Thread(target=Robot.thread_remote_input, args=(self,),\
                 name='RemoteInput')
         ]
@@ -964,16 +963,13 @@ class Robot:
 
                     time.sleep(0.05)
 
-    def thread_kinect(self):
+    def thread_sense_human(self):
 
         while 1:
 
-            # while self.z_t is not None:
-            #     time.sleep(1e-6)
-
-            # The x-y-locations of obstacles projected from kinect's depth.
-            depth_map = self.kin.get_depth()
-            self.z_t = self.kin.depth_map_to_world(depth_map, clean=True)
+            # Wait until z_t is available.
+            while self.z_t is None:
+                time.sleep(1e-3)
 
             end_cells = slam.world_frame_to_cell_pos(self.z_t,\
                 config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
@@ -1014,10 +1010,10 @@ class Robot:
 
             time.sleep(0.0333)
 
-            if self.is_thread_stop_requested[THREAD_KINECT]:
+            if self.is_thread_stop_requested[THREAD_SENSE_HUMAN]:
                 break
 
-    def thread_motion5(self):
+    def thread_slam(self):
 
         while True:
 
@@ -1049,15 +1045,19 @@ class Robot:
 
             self.__distance_traveled += abs(delta_distance)
 
-            # Use the odometry measurement as the "control".
+            # Update u_t. Use the odometry measurement as the "control".
             self.u_t = [delta_distance, self.__delta_angle]
 
+            # update z_t.
+            self.__update_kinect_measurements()
+
+            # Update odometry position using dead reckoning.
             self.__update_odometry(delta_distance, self.__delta_angle)
 
             self.__motion_update_counter =\
                 (self.__motion_update_counter + 1) % 1000
 
-            if self.is_thread_stop_requested[THREAD_MOTION]:
+            if self.is_thread_stop_requested[THREAD_SLAM]:
                 break
 
     def thread_motion4(self):
@@ -1703,7 +1703,7 @@ class Robot:
             border_bgr=(0, 51, 25))
 
         imdraw.draw_robot(hum_image, config.GRID_MAP_RESOLUTION,
-            best_particle.x, bgr=(0, 153, 0), radius=2,
+            best_particle.x, bgr=(0, 153, 0), radius=3,
             show_heading=True, heading_thickness=2,
             border_thickness=1,
             border_bgr=(0, 51, 25))
@@ -1720,6 +1720,12 @@ class Robot:
 
             cv2.imshow(WINDOW_MAP, map_image)
             cv2.imshow('Human Map', hum_image)
+
+    def __update_kinect_measurements(self):
+
+        # The x-y-locations of obstacles projected from kinect's depth.
+        depth_map = self.kin.get_depth()
+        self.z_t = self.kin.depth_map_to_world(depth_map, clean=True)
                 
     def display(self):
 
