@@ -33,7 +33,7 @@ def main():
     particles =\
             [slam.Particle(x, w) for _ in range(num_particles)]
 
-    NOISE = (1e-4, 1e-4, 1e-6, 1e-6)
+    NOISE = (1e-4, 1e-4, 1e-5, 1e-5)
 
     d3 = slam.d3_map(map_image, invert=True)
 

@@ -25,7 +25,7 @@ class Kinect:
 
     MAX_RANGE = 2**12 - 1
     MIN_DEPTH_MM = 600
-    MAX_DEPTH_MM = 8000
+    MAX_DEPTH_MM = 5000
     X_MULT = 1.12032
     Y_MULT = 0.84024
 
@@ -177,7 +177,7 @@ class Kinect:
                         (p1_x, p1_y), cv2.FONT_HERSHEY_PLAIN, 1,
                         (255, 0, 255), 2)
 
-                    if ave_conf > 0.65:
+                    if ave_conf > 0.25:
                         positions.append([z_cm, -x_cm])
 
         return np.array(positions)

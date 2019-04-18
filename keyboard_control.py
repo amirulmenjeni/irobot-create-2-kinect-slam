@@ -23,7 +23,7 @@ def main(stdscr, robot):
     is_reverse = False
     is_key_press = False 
     v = 5
-    w = 0
+    w = 0.0001
 
     while True:
         try:
@@ -97,10 +97,10 @@ def main(stdscr, robot):
             # d = d * 255
             # d = d.astype(np.uint8)
 
-            d = slam.d3_map(robot.posterior)
-            slam.draw_square(d, 10.0, robot.get_pose(), (255, 0, 0), width=3)
-            slam.draw_vertical_line(d, 250, (0, 0, 255))
-            slam.draw_horizontal_line(d, 250, (0, 0, 255))
+            # d = slam.d3_map(robot.posterior)
+            # slam.draw_square(d, 10.0, robot.get_pose(), (255, 0, 0), width=3)
+            # slam.draw_vertical_line(d, 250, (0, 0, 255))
+            # slam.draw_horizontal_line(d, 250, (0, 0, 255))
 
             cv2.imshow('map', d)
             cv2.waitKey(250)

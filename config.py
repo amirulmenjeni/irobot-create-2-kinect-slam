@@ -8,10 +8,12 @@ PROJECT_PATH = '/home/amenji/git/fyp-robot-navigation/'
 # The redist path for OpenNI2 and NiTE2 containing the relevant files.
 PRIMESENSE_REDIST_PATH = PROJECT_PATH + '/redist/'
 
+RESOURCE_HAAR_CASCADES = PROJECT_PATH + '/resource/haarcascades/'
+
 ##################################################
 # DISPLAY / UI.
 ##################################################
-MAP_SCALE_FACTOR = 2
+MAP_SCALE_FACTOR = 3
 
 ##################################################
 # ROBOT SPECIFIC.
@@ -24,24 +26,25 @@ AXIAL_LENGTH = 26.0
 PID_X = (0.15, 0, 0)
 PID_Y = (0.15, 0, 0)
 
-NORMAL_DRIVE_SPEED = 5
-NORMAL_ROTATE_SPEED = 0.0873
+NORMAL_DRIVE_SPEED = 4
+NORMAL_ROTATE_SPEED = 0.1745
 ESCAPE_OBSTACLE_SPEED = 5
 
 ##################################################
 # SLAM
 ##################################################
-CONTROL_DELTA_TIME = 0.25
+CONTROL_DELTA_TIME = 0.10
 MEASURE_DELTA_TIME = 0
-PF_NUM_PARTICLES = 120
+PF_NUM_PARTICLES = 72
 GRID_MAP_RESOLUTION = 10.0
-GRID_MAP_SIZE = (300, 300)
-MOTION_NOISE = (1e-4, 1e-4, 1e-6, 1e-6)
+GRID_MAP_SIZE = (250, 250)
+MOTION_NOISE = (1e-5, 1e-5, 1e-6, 1e-6)
 OCCU_THRES = 0.90
 
 # Kernel defining the shape representation of the robot projected on the grid
 # map.
-BODY_KERNEL_RADIUS = 1
+BODY_KERNEL_RADIUS = 2
+PATH_COST_RADIUS = 3
 
 ##################################################
 # SOUNDS

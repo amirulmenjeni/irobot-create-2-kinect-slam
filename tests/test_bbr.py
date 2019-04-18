@@ -14,4 +14,4 @@ import logging
 
 r = Robot()
 r.drive_velocity(0, 0)
-r.run(show_display=True)
+r.run(show_display=True, disable_auto=False)
