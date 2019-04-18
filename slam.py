@@ -970,7 +970,7 @@ def likelihood_field_measurement_model(end_cells, x, occ_cells, map_size, res):
 
     q = 1
     for d in dist[0]:
-        q = q * (0.999*prob_normal_distribution(d, 1) + 0.001)
+        q = q * (0.999*prob_normal_distribution(d, 0.55) + 0.001)
         
     return q
 
@@ -1120,11 +1120,10 @@ def is_colliding(cell, grid_map, occu_thres, kernel_radius):
                 return True
     return False
 
-def path_cost(cell, grid_map, occu_thres, cost_radius):
+def path_cost(cell, grid_map, occu_thres, cost_radius, sigma_dist=10):
 
     row, col = cell
     count = 1
-    e = 1e-3
 
     for i in range(row - cost_radius, row + cost_radius + 1):
         for j in range(col - cost_radius, col + cost_radius + 1):
@@ -1132,7 +1131,8 @@ def path_cost(cell, grid_map, occu_thres, cost_radius):
             if not is_out_of_bound((i, j), grid_map.shape):
                 if grid_map[i, j] >= occu_thres:
                     val = rutil.euclidean_distance(cell, (i, j))
-                    count += 1 / (val**2 + val - 10)
+                    # count += 10 / (val**2 + val)
+                    count += prob_normal_distribution(val, sigma_dist)
 
     return count
 
