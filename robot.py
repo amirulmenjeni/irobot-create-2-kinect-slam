@@ -431,6 +431,7 @@ class Robot:
         self.camera_image = None
         self.occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
         self.hum_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
+        self.raw_occ_grid_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
         local_map = self.__init_local_map()
 
@@ -445,11 +446,24 @@ class Robot:
         self.path = []
         self.u_t = None
         self.z_t = None
+        self.h_t = []
         self.goal_cell = None
         self.nearest_human = None
         self.current_solution = []
         self.__distance_traveled = 0
         self.scan_locations = []
+
+        filename = rutil.now_file_name(postfix='_slam')
+        filename = './saves/vid/' + filename + '.avi'
+        self.video_writer_slam = cv2.VideoWriter(\
+            filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
+            config.GRID_MAP_SIZE)
+
+        filename = rutil.now_file_name(postfix='_odom')
+        filename = './saves/vid/' + filename + '.avi'
+        self.video_writer_odom = cv2.VideoWriter(\
+            filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
+            config.GRID_MAP_SIZE)
 
         ###################################################
         # Behavior based robotic.
@@ -1022,11 +1036,24 @@ class Robot:
             delta_distance, delta_angle = 0, 0
             self.get_sensor(PKT_MOTION)
 
+            # Update u_t. Use the odometry measurement as the "control".
+            self.u_t = [self.__delta_distance, self.__delta_angle]
+
             # Update z_t.
             self.__update_kinect_measurements()
 
+            # Update grid map with raw odometry.  Solely implemented for
+            # comparison.
+            if self.z_t is not None and self.u_t is not None and\
+                    (np.abs(self.u_t) > 1e-6).any():
+                self.__update_raw_odom_map(self.z_t, self.get_odom_pose(),
+                    config.GRID_MAP_SIZE, config.GRID_MAP_RESOLUTION)
+
             # Update fastSLAM particles when u_t is not static and when we have
-            # observation z_t.
+            # observation z_t. Note that the update procedure for FastSLAM can
+            # take quite some time and it is therefore important to include the
+            # time taken for the update to take place in determining the
+            # delta_distance and delta_angle.
             if self.z_t is not None and self.u_t is not None and\
                     (np.abs(self.u_t) > 1e-6).any():
 
@@ -1047,9 +1074,6 @@ class Robot:
             self.__delta_angle = math.radians(delta_angle)
 
             self.__distance_traveled += abs(delta_distance)
-
-            # Update u_t. Use the odometry measurement as the "control".
-            self.u_t = [delta_distance, self.__delta_angle]
 
             # Update odometry position using dead reckoning.
             self.__update_odometry(delta_distance, self.__delta_angle)
@@ -1567,6 +1591,8 @@ class Robot:
 
                 if self.__client_keyboard == KEY_F2:
                     rutil.save_npy(best_particle.m)
+                    rutil.save_img(best_particle.m, postfix='_slam')
+                    rutil.save_img(self.raw_occ_grid_map, postfix='_odom')
 
                 self.__update_behavior(disable_auto)
                 self.__update_display(show_display)
@@ -1609,11 +1635,11 @@ class Robot:
                 # sensor value.
                 print('Error getting PKT_BUMP')
 
-            # if nearest_human is not None:
-            #     self.nearest_human = nearest_human
-            #     self.behaviors[Beh.APPROACH_HUMAN].send_request()
-            # else:
-            #     self.nearest_human = None
+            if len(self.h_t) > 0:
+                # self.nearest_human = nearest_human
+                self.behaviors[Beh.APPROACH_HUMAN].send_request()
+            else:
+                self.nearest_human = None
 
             self.behaviors[Beh.EXPLORE].send_request()
 
@@ -1658,6 +1684,7 @@ class Robot:
         best_particle = self.fast_slam.highest_particle()
         map_image = slam.d3_map(best_particle.m, invert=True)
         hum_image = slam.d3_map(self.hum_grid_map, invert=True)
+        raw_image = slam.d3_map(self.raw_occ_grid_map, invert=True)
 
         # Draw global reference frame's vertical and horizontal
         # axis.
@@ -1691,13 +1718,19 @@ class Robot:
         #                 config.GRID_MAP_RESOLUTION, step,
         #                 (0, 255, 0), width=1, pos_cell=True)
 
-        for cell in self.scan_locations:
-            imdraw.draw_square(map_image, RESOLUTION, cell, (0,0,255),
-                width=2, pos_cell=True)
+        # for cell in self.scan_locations:
+        #     imdraw.draw_square(map_image, RESOLUTION, cell, (0,0,255),
+        #         width=2, pos_cell=True)
 
         # # Draw robot pose.
         imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
             best_particle.x, bgr=(0, 153, 0), radius=2,
+            show_heading=True, heading_thickness=2,
+            border_thickness=1,
+            border_bgr=(0, 51, 25))
+
+        imdraw.draw_robot(raw_image, config.GRID_MAP_RESOLUTION,
+            self.get_odom_pose(), bgr=(0, 153, 0), radius=3,
             show_heading=True, heading_thickness=2,
             border_thickness=1,
             border_bgr=(0, 51, 25))
@@ -1710,6 +1743,10 @@ class Robot:
 
         self.__display_map = map_image
         self.__display_human_map = hum_image
+
+        self.video_writer_slam.write(map_image)
+        self.video_writer_odom.write(slam.d3_map(self.raw_occ_grid_map,
+            invert=True))
 
         if not self.__conn_ssh and show_display:
 
@@ -1726,6 +1763,7 @@ class Robot:
         # The x-y-locations of obstacles projected from kinect's depth.
         depth_map = self.kin.get_depth()
         self.z_t = self.kin.depth_map_to_world(depth_map, clean=True)
+        self.h_t = self.kin.get_users_pos()
                 
     def display(self):
 
@@ -2133,6 +2171,28 @@ class Robot:
 
         self.__pose = np.array([x, y, orientation])
 
+    def __update_raw_odom_map(self, z_t, x_t, map_size, map_res):
+
+        map_size = np.array(map_size)
+
+        end_cells = slam.world_frame_to_cell_pos(z_t, map_size, map_res)
+        mid = np.array(map_size // 2).astype(int)
+        obs_dict = slam.observed_cells(mid, end_cells)
+
+        obs_mat = slam.observation_matrix(\
+            obs_dict, map_size, occu=0.9, free=-0.7)
+
+        z_mat = np.copy(obs_mat)
+        z_cells = z_mat[:,:2]
+
+        H = rutil.rigid_trans_mat3(x_t)
+        z_cells = rutil.transform_cells_2d(H, z_cells, map_size,
+                map_res)
+
+        z_mat[:,:2] = z_cells
+
+        slam.update_occupancy_grid_map(self.raw_occ_grid_map, z_mat)
+
     def __inverse_drive(v, w, b):
 
         return v - b * w, v + b * w
@@ -2151,11 +2211,11 @@ class Robot:
         h_err = rutil.angle_error(heading_vector, direction_vector)
 
         # Case when it's quite possible to drive forward and turn.
-        if -math.pi/4 < abs(h_err) < +math.pi/4:
+        if abs(h_err) < math.pi/2:
 
             if h_err != 0:
                 radius = distance *\
-                        math.sin(math.pi/2 + abs(h_err)) / math.sin(2*h_err)
+                        math.sin(math.pi/2 - abs(h_err)) / math.sin(2*h_err)
                 return radius
             else:
                 return DRIVE_RADIUS_STRAIGHT
