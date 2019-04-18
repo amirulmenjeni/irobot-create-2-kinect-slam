@@ -242,17 +242,26 @@ def min_max_normalize(val, min_val, max_val):
     r = max_val - min_val
     return (val - min_val) / r
 
-def save_npy(img):
+def now_file_name(postfix=''):
 
     now = datetime.datetime.now()
     year, month, day, hr, mn = now.year, now.month, now.day, now.hour,\
         now.minute
+    filename = "{:04d}{:02d}{:02d}_{:02d}{:02d}{}".format(\
+        year, month, day, hr, mn, postfix)
 
-    filename = "./saves/npy/{:04d}{:02d}{:02d}_{:02d}{:02d}.npy".format(\
-        year, month, day, hr, mn)
+    return filename
 
-    np.save(filename, img)
+def save_npy(img, postfix=''):
 
+    filename = now_file_name(postfix)
+    np.save('./saves/npy/' + filename + '.npy', img)
+    print(filename, 'saved.')
+
+def save_img(img, postfix=''):
+
+    filename = now_file_name(postfix)
+    cv2.imwrite('./saves/img/' + filename + '.png', img)
     print(filename, 'saved.')
 
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
