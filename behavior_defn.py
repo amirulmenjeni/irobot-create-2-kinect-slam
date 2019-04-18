@@ -34,11 +34,8 @@ def approach_human(beh, robot):
     goal_cell = None
     next_cell = None
     goal_pos = None
-    flag_approached = False
 
     while True:
-
-        robot.wait_motion_update()
 
         robot_cell = robot.get_cell_pos()
         best_particle = robot.fast_slam.highest_particle()
@@ -48,22 +45,23 @@ def approach_human(beh, robot):
             print('INTERRUPTED')
             break
 
-        nearest_human = robot.get_nearest_human()
-        if nearest_human is None:
-            print('NO MORE VISIBLE HUMAN.')
-            robot.drive_velocity(0, 0)
+        hum_pos = robot.h_t
+
+        if len(hum_pos) == 0:
+            print('No human.')
             break
-        robot.nearest_human = nearest_human
+
+        goal_cell = slam.world_to_cell_pos(hum_pos, MAP_SIZE, RESOLUTION)
+        robot.goal_cell = goal_cell
+        robot.nearest_human = goal_cell
 
         # We're quite sure that since the robot is at position (ru, rv),
         # there's no obstacles around here.
         grid_map = slam.fill_area(grid_map, robot_cell, KERNEL_RADIUS + 1, 0.10)
 
-        goal_cell = nearest_human
-        robot.goal_cell
         solution = slam.shortest_path(robot_cell, goal_cell, grid_map,
             OCCU_THRES, kernel_radius=KERNEL_RADIUS, cost_radius=COST_RADIUS,
-            epsilon=-1)
+            epsilon=2)
         robot.current_solution = solution
 
         try:
@@ -97,30 +95,7 @@ def approach_human(beh, robot):
             turn_radius = robot.inverse_drive_kinematic(next_pos)
             robot.drive_radius(SPEED, turn_radius)
 
-    if flag_approached:
-
-        # Orient the robot to face the human once it has approached the human.
-        while True:
-
-            robot.wait_motion_update()
-
-            best_particle = robot.fast_slam.highest_particle()
-            pose = best_particle.x
-
-            dir_vec = rutil.direction_vector(pose[:2], goal_pos)
-            hdg_vec = rutil.angle_to_dir(pose[2])
-
-            heading_diff = rutil.angle_error(hdg_vec, dir_vec)
-
-            w = ROTATE_SPEED * math.sin(abs(heading_diff) / 2.0)
-
-            if heading_diff > 0:
-                robot.drive_velocity(0, +w)
-            elif heading_diff < 0:
-                robot.drive_velocity(0, -w)
-
-            if abs(heading_diff) < 0.043633:
-                break
+        time.sleep(DELTA_TIME)
 
     print('<< APPROACH-HUMAN')
 
@@ -180,10 +155,11 @@ def explore(beh, robot):
             robot.goal_cell = frontier_cell
             robot.current_solution = solution
         else:
+            # Update solution when next_cell is reached.
             if slam.goal_test(robot_cell, next_cell, KERNEL_RADIUS):
                 solution = slam.shortest_path(robot_cell, goal_cell,\
                     grid_map, OCCU_THRES, kernel_radius=KERNEL_RADIUS,\
-                    cost_radius=COST_RADIUS)
+                    cost_radius=COST_RADIUS, epsilon=2)
                 frontier_cell = slam.exploration_path_frontier_cell(
                     grid_map, solution)
                 robot.goal_cell = frontier_cell
@@ -201,11 +177,20 @@ def explore(beh, robot):
 
         goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
 
+        # If the robot is within 1 m distance to a frontier, do a 360 scan.
         if frontier_cell is not None:
             dist = rutil.euclidean_distance(frontier_cell, robot_cell)
             if RESOLUTION * dist < 100:
                 beh.continue_to(robot.behaviors[Beh.SCAN_360])
-                return
+                robot.current_solution = []
+                break
+
+        # If the robot have traveled more than 250 cm, do a 360 scan.
+        if robot.get_distance_traveled() > 250:
+            print('Scanning after 250 cm distance traveled.')
+            robot.reset_distance_traveled()
+            beh.continue_to(robot.behaviors[Beh.SCAN_360])
+            return
 
         if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
             print('Reached goal (within circle radius).')
@@ -400,10 +385,10 @@ class Beh(Enum):
 
 beh_def_list = [\
     (Beh.EXPLORE, 0, explore),
-    (Beh.APPROACH_HUMAN, 200, approach_human),
+    (Beh.APPROACH_HUMAN, 200, approach_human2),
     (Beh.SCAN_360, 300, scan_360),
     (Beh.ESCAPE_OBSTACLE, 999, escape_obstacle),
     (Beh.GO_TO_INPUT_GOAL, 2000, go_to_input_goal),
     (Beh.MANUAL_DRIVING, 2001, manual_driving),
-    (Beh.STOP_DRIVING, 3001, stop_driving)
+    (Beh.STOP_DRIVING, 3001, stop_driving),
 ]
