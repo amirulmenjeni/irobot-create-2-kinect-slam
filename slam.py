@@ -10,7 +10,6 @@ import random
 import heapq
 import logging
 from data_structures import Node
-from icp import icp
 from sklearn.neighbors import NearestNeighbors
 
 class ParticleFilter:
@@ -756,39 +755,6 @@ def local_occupancy(cell_dict, out, map_size, resolution):
         else:
             logit = rutil.prob_to_log_odds(out[p]) + FREE
             out[p] = rutil.log_odds_to_prob(logit)
-
-def scan_match(src_pts, dst_pts, pts):
-
-    """
-    Find the rigid transformation H that reduces the mean squared error between
-    the point sets src_pts and dst_pts, and return new points after applying H
-    to pts. The two point sets should have many overlapping points to increase
-    the accuracy of H.
-
-    Note that the row size of src_pts and dst_pts should be more or less the
-    same size (i.e. K ~= J). D is the dimension of the point sets.
-
-    @param src_pts:
-        An KxD numpy array where each row is size-D array.
-    @param dst_pts:
-        An JxD numpy array where each row is size-D array.
-    @param pts:
-        An LxD numpy array where each row is size-D array.
-    """
-
-    min_sz = min(src_pts.shape[0], dst_pts.shape[0])
-    src = src_pts[:min_sz]
-    dst = dst_pts[:min_sz]
-    
-    tran, _, _ = icp.icp(src, dst, max_iterations=30)
-
-    Rt = tran[:2,:2]
-    Tt = tran[:2,2].T
-
-    new_pts = np.dot(Rt, pts.T).T + Tt
-    new_pts = new_pts.round(0).astype(int)
-
-    return new_pts 
 
 def motion_model_velocity(succ_pose, curr_pose, control, dt,
     err_params=(1, 1, 1, 1, 1, 1)):
