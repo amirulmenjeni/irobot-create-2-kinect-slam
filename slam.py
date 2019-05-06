@@ -1202,9 +1202,15 @@ def shortest_path(start, goal, grid_map, occu_thres,
     if is_colliding(goal, grid_map, occu_thres, kernel_radius):
         return []
 
+    tstart = time.time()
+
     while 1:
 
         if len(frontiers) == 0:
+            return []
+
+        if time.time() - tstart > 5.0:
+            print('Search timed out.')
             return []
 
         node = heapq.heappop(frontiers)
