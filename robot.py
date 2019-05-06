@@ -447,23 +447,18 @@ class Robot:
         self.u_t = None
         self.z_t = None
         self.h_t = []
+        self.rgb_t = None
         self.goal_cell = None
         self.nearest_human = None
         self.current_solution = []
         self.__distance_traveled = 0
         self.scan_locations = []
 
-        filename = rutil.now_file_name(postfix='_slam')
+        filename = rutil.now_file_name()
         filename = './saves/vid/' + filename + '.avi'
-        self.video_writer_slam = cv2.VideoWriter(\
+        self.video_writer = cv2.VideoWriter(\
             filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
-            config.GRID_MAP_SIZE)
-
-        filename = rutil.now_file_name(postfix='_odom')
-        filename = './saves/vid/' + filename + '.avi'
-        self.video_writer_odom = cv2.VideoWriter(\
-            filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
-            config.GRID_MAP_SIZE)
+            (config.GRID_MAP_SIZE[1]*2, config.GRID_MAP_SIZE[0]))
 
         ###################################################
         # Behavior based robotic.
@@ -1637,11 +1632,13 @@ class Robot:
 
             if len(self.h_t) > 0:
                 # self.nearest_human = nearest_human
+                self.behaviors[Beh.APPROACH_HUMAN].input_param({\
+                        'human-pos': self.h_t[0]})
                 self.behaviors[Beh.APPROACH_HUMAN].send_request()
             else:
                 self.nearest_human = None
 
-            self.behaviors[Beh.EXPLORE].send_request()
+            # self.behaviors[Beh.EXPLORE].send_request()
 
         input_v = 0
         input_w = 0
@@ -1685,17 +1682,20 @@ class Robot:
         map_image = slam.d3_map(best_particle.m, invert=True)
         hum_image = slam.d3_map(self.hum_grid_map, invert=True)
         raw_image = slam.d3_map(self.raw_occ_grid_map, invert=True)
+        rgb_image = self.rgb_t
+        # if rgb_image is None:
+        #     rgb_image = np.full(map_image.shape, 0)
 
         # Draw global reference frame's vertical and horizontal
         # axis.
-        imdraw.draw_vertical_line(map_image,\
-                    MAP_SIZE[1] // 2, (0, 0, 255))
-        imdraw.draw_horizontal_line(map_image,\
-                    MAP_SIZE[0] // 2, (0, 0, 255))
-        imdraw.draw_vertical_line(hum_image,\
-                    MAP_SIZE[1] // 2, (0, 0, 255))
-        imdraw.draw_horizontal_line(hum_image,\
-                    MAP_SIZE[0] // 2, (0, 0, 255))
+        # imdraw.draw_vertical_line(map_image,\
+        #             MAP_SIZE[1] // 2, (0, 0, 255))
+        # imdraw.draw_horizontal_line(map_image,\
+        #             MAP_SIZE[0] // 2, (0, 0, 255))
+        # imdraw.draw_vertical_line(hum_image,\
+        #             MAP_SIZE[1] // 2, (0, 0, 255))
+        # imdraw.draw_horizontal_line(hum_image,\
+        #             MAP_SIZE[0] // 2, (0, 0, 255))
 
         if self.nearest_human is not None:
             imdraw.draw_square(map_image,
@@ -1724,7 +1724,7 @@ class Robot:
 
         # # Draw robot pose.
         imdraw.draw_robot(map_image, config.GRID_MAP_RESOLUTION,
-            best_particle.x, bgr=(0, 153, 0), radius=2,
+            best_particle.x, bgr=(0, 153, 0), radius=3,
             show_heading=True, heading_thickness=2,
             border_thickness=1,
             border_bgr=(0, 51, 25))
@@ -1744,9 +1744,21 @@ class Robot:
         self.__display_map = map_image
         self.__display_human_map = hum_image
 
-        self.video_writer_slam.write(map_image)
-        self.video_writer_odom.write(slam.d3_map(self.raw_occ_grid_map,
-            invert=True))
+        # if map_image.shape[0] < rgb_image.shape[0]:
+        #     pad = rgb_image.shape[0] - map_image.shape[0]
+        #     map_image = np.vstack((map_image, 
+        #         np.full((pad, map_image.shape[1], 3), 0, dtype=np.uint8))
+        #     )
+        #     raw_image = np.vstack((raw_image, 
+        #         np.full((pad, raw_image.shape[1], 3), 0, dtype=np.uint8))
+        #     )
+
+        # fx = MAP_SIZE[1] / rgb_image.shape[1]
+        # fy = MAP_SIZE[0] / rgb_image.shape[0]
+        # rgb_image = cv2.resize(rgb_image, map_image.shape[:2], rgb_image, fx, fy,
+        #         cv2.INTER_NEAREST)
+
+        self.video_writer.write(np.hstack((map_image, raw_image)))
 
         if not self.__conn_ssh and show_display:
 
@@ -1764,6 +1776,7 @@ class Robot:
         depth_map = self.kin.get_depth()
         self.z_t = self.kin.depth_map_to_world(depth_map, clean=True)
         self.h_t = self.kin.get_users_pos()
+        self.rgb_t = self.kin.get_rgb()
                 
     def display(self):
 
