@@ -323,7 +323,7 @@ class StaticPlotter:
 class Robot:
 
     def __init__(self, b=26, port='', max_speed=10,
-        pid_v=(0, 0, 0), pid_w=(0, 0, 0)):
+        pid_v=(0, 0, 0), pid_w=(0, 0, 0), disable_kinect=False):
 
         """
         Initialize the Robot class.
@@ -416,8 +416,11 @@ class Robot:
              1: '111',
              2: '000'}) # Plot number 2 is not drawn
 
-        self.kin = Kinect(config.PRIMESENSE_REDIST_PATH,\
-            enable_color_stream=False)
+        if not disable_kinect:
+            self.kin = Kinect(config.PRIMESENSE_REDIST_PATH,\
+                enable_color_stream=False)
+        else:
+            self.kin = None
 
         ###################################################
         # Status.
