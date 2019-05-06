@@ -261,6 +261,7 @@ def save_npy(img, postfix=''):
 def save_img(img, postfix=''):
 
     filename = now_file_name(postfix)
+    img = (img * 255).astype(np.uint8)
     cv2.imwrite('./saves/img/' + filename + '.png', img)
     print(filename, 'saved.')
 
