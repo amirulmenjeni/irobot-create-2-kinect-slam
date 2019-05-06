@@ -86,23 +86,6 @@ def main(stdscr, robot):
                     robot.drive(-v, w)
                 is_key_press = False
 
-            # log_odds_vector = np.vectorize(slam.log_odds_to_prob)
-            # m = log_odds_vector(robot.posterior)
-            # m = m * 255
-            # m = m.astype(np.uint8)
-            # cv2.imshow('Posterior', m)
-
-            # log_odds_vector = np.vectorize(slam.log_odds_to_prob)
-            # d = log_odds_vector(robot.posterior)
-            # d = d * 255
-            # d = d.astype(np.uint8)
-
-            # d = slam.d3_map(robot.posterior)
-            # slam.draw_square(d, 10.0, robot.get_pose(), (255, 0, 0), width=3)
-            # slam.draw_vertical_line(d, 250, (0, 0, 255))
-            # slam.draw_horizontal_line(d, 250, (0, 0, 255))
-
-            cv2.imshow('map', d)
             cv2.waitKey(250)
 
         except Exception as e:
