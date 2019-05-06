@@ -25,7 +25,7 @@ class Kinect:
 
     MAX_RANGE = 2**12 - 1
     MIN_DEPTH_MM = 600
-    MAX_DEPTH_MM = 5000
+    MAX_DEPTH_MM = 8000
     X_MULT = 1.12032
     Y_MULT = 0.84024
 
@@ -160,25 +160,27 @@ class Kinect:
                         (p1_x, (p1_y + h)//2), cv2.FONT_HERSHEY_PLAIN, 1,
                         (255, 255, 255), 2)
 
-                if users[i].skeleton.state ==\
-                        _nite2.NiteSkeletonState.NITE_SKELETON_TRACKED:
+                positions.append([z_cm, -x_cm])
 
-                    ave_conf = 0
-                    for k in range(8, 15):
-                        ave_conf +=\
-                            users[i].skeleton.joints[k].positionConfidence
-                    ave_conf /= 7
+                # if users[i].skeleton.state ==\
+                #         _nite2.NiteSkeletonState.NITE_SKELETON_TRACKED:
 
-                    print('User {} tracked with {} confidence.'.format(\
-                            users[i].id, ave_conf
-                        ))
+                #     ave_conf = 0
+                #     for k in range(8, 15):
+                #         ave_conf +=\
+                #             users[i].skeleton.joints[k].positionConfidence
+                #     ave_conf /= 7
 
-                    cv2.putText(rgb, str(ave_conf),\
-                        (p1_x, p1_y), cv2.FONT_HERSHEY_PLAIN, 1,
-                        (255, 0, 255), 2)
+                #     print('User {} tracked with {} confidence.'.format(\
+                #             users[i].id, ave_conf
+                #         ))
 
-                    if ave_conf > 0.25:
-                        positions.append([z_cm, -x_cm])
+                #     cv2.putText(rgb, str(ave_conf),\
+                #         (p1_x, p1_y), cv2.FONT_HERSHEY_PLAIN, 1,
+                #         (255, 0, 255), 2)
+
+                #     if ave_conf >= 0.0:
+                #         positions.append([z_cm, -x_cm])
 
         return np.array(positions)
 
