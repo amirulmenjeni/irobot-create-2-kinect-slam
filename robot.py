@@ -1638,7 +1638,7 @@ class Robot:
             else:
                 self.nearest_human = None
 
-            # self.behaviors[Beh.EXPLORE].send_request()
+            self.behaviors[Beh.EXPLORE].send_request()
 
         input_v = 0
         input_w = 0
