@@ -29,11 +29,14 @@ def approach_human(beh, robot):
     DELTA_TIME = config.CONTROL_DELTA_TIME
 
     CELL_STEPS = 3
-    RADIUS_TOL = 150
+    RADIUS_TOL = 100
 
     goal_cell = None
     next_cell = None
     goal_pos = None
+    flag_approached = False
+
+    hum_pos = beh.get_param('human-pos')
 
     while True:
 
@@ -45,23 +48,26 @@ def approach_human(beh, robot):
             print('INTERRUPTED')
             break
 
-        hum_pos = robot.h_t
+        # humans = robot.h_t
+        # if len(humans) == 0:
+        #     print('no human')
+        #     break
 
-        if len(hum_pos) == 0:
-            print('No human.')
-            break
+        # hum_pos = humans[0]
 
         goal_cell = slam.world_to_cell_pos(hum_pos, MAP_SIZE, RESOLUTION)
         robot.goal_cell = goal_cell
-        robot.nearest_human = goal_cell
 
         # We're quite sure that since the robot is at position (ru, rv),
         # there's no obstacles around here.
         grid_map = slam.fill_area(grid_map, robot_cell, KERNEL_RADIUS + 1, 0.10)
 
+        grid_map = slam.fill_area(grid_map, goal_cell,\
+                2, 0.10)
+
         solution = slam.shortest_path(robot_cell, goal_cell, grid_map,
             OCCU_THRES, kernel_radius=KERNEL_RADIUS, cost_radius=COST_RADIUS,
-            epsilon=2)
+            epsilon=-1)
         robot.current_solution = solution
 
         try:
@@ -73,22 +79,21 @@ def approach_human(beh, robot):
 
             print('APPROACH-HUMAN: Error getting next cell.')
 
-            slam.fill_area(robot.hum_grid_map, nearest_human, 5, 0,\
-                out=robot.hum_grid_map)
-
             next_cell = None
             robot.nearest_human = None
             continue
 
-        goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
+        # goal_pos = slam.cell_to_world_pos(goal_cell, MAP_SIZE, RESOLUTION)
 
-        if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):
+        if rutil.is_in_circle(hum_pos, RADIUS_TOL, best_particle.x[:2]):
             print('Human approached.')
             robot.drive_velocity(0, 0)
+            time.sleep(1.5)
             robot.goal_cell = None
             robot.nearest_human = None
             flag_approached = True
             playsound(config.SND_GREET)
+            time.sleep(2.5)
             break
         else:
             next_pos = slam.cell_to_world_pos(next_cell, MAP_SIZE, RESOLUTION)
@@ -96,6 +101,35 @@ def approach_human(beh, robot):
             robot.drive_radius(SPEED, turn_radius)
 
         time.sleep(DELTA_TIME)
+
+    # if flag_approached:
+
+    #     print('rotating...')
+
+    #     while True:
+    #         best_particle = robot.fast_slam.highest_particle()
+    #         pose = best_particle.x
+
+    #         dir_vec = rutil.direction_vector(pose[:2], goal_pos)
+    #         hdg_vec = rutil.angle_to_dir(pose[2])
+
+    #         heading_diff = rutil.angle_error(hdg_vec, dir_vec)
+
+    #         if abs(heading_diff) < 0.043633:
+    #             break
+
+    #         # w = 0.0 * math.sin(abs(heading_diff) / 2.0)
+    #         w = 0.02723
+
+    #         if heading_diff > 0:
+    #             robot.drive_velocity(0, +w)
+    #         elif heading_diff < 0:
+    #             robot.drive_velocity(0, -w)
+
+    #         time.sleep(DELTA_TIME)
+
+
+    robot.drive_velocity(0, 0)
 
     print('<< APPROACH-HUMAN')
 
@@ -186,7 +220,7 @@ def explore(beh, robot):
                 break
 
         # If the robot have traveled more than 250 cm, do a 360 scan.
-        if robot.get_distance_traveled() > 250:
+        if robot.get_distance_traveled() > 150:
             print('Scanning after 250 cm distance traveled.')
             robot.reset_distance_traveled()
             beh.continue_to(robot.behaviors[Beh.SCAN_360])
@@ -385,7 +419,7 @@ class Beh(Enum):
 
 beh_def_list = [\
     (Beh.EXPLORE, 0, explore),
-    (Beh.APPROACH_HUMAN, 200, approach_human2),
+    (Beh.APPROACH_HUMAN, 200, approach_human),
     (Beh.SCAN_360, 300, scan_360),
     (Beh.ESCAPE_OBSTACLE, 999, escape_obstacle),
     (Beh.GO_TO_INPUT_GOAL, 2000, go_to_input_goal),
