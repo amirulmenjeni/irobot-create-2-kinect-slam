@@ -35,7 +35,7 @@ ESCAPE_OBSTACLE_SPEED = 5
 ##################################################
 CONTROL_DELTA_TIME = 0.10
 MEASURE_DELTA_TIME = 0
-PF_NUM_PARTICLES = 72
+PF_NUM_PARTICLES = 120
 GRID_MAP_RESOLUTION = 10.0
 GRID_MAP_SIZE = (250, 250)
 MOTION_NOISE = (1e-5, 1e-5, 1e-6, 1e-6)
@@ -44,7 +44,7 @@ OCCU_THRES = 0.90
 # Kernel defining the shape representation of the robot projected on the grid
 # map.
 BODY_KERNEL_RADIUS = 2
-PATH_COST_RADIUS = 3
+PATH_COST_RADIUS = 5
 
 ##################################################
 # SOUNDS
