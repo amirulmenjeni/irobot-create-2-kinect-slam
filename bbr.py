@@ -105,6 +105,11 @@ class Behavior():
         self.set_function(func)
 
     def set_function(self, func, init_func=None):
+
+        """
+        Initialize the thread with the function that runs the behavior.
+        """
+
         self.__func = func
         self.__init_func = init_func
 
@@ -128,37 +133,82 @@ class Behavior():
 
     def continue_to(self, behavior):
 
+        """
+        Once the current behavior ends, immediately start the next behavior set
+        here.
+        """
+
         self.__arbiter.next_queue.put(behavior)
 
     def get_name(self):
+
+        """
+        Get the name (identifier) of the behavior.
+        """
+
         return self.__name
 
     def get_priority(self):
+
+        """
+        Get the priority of the behavior. Higher priority means more
+        important.
+        """
+
         return self.__priority
 
     def get_function(self):
+
+        """
+        Get the function that runs the behavior.
+        """
+
         return self.__func
 
     def get_init_function(self):
         return self.__init_func
 
     def get_arbiter(self):
+
+        """
+        Get the arbiter of this behavior.
+        """
+
         return self.__arbiter
 
     def get_param(self, param):
+
+        """
+        Get the argument parameters that goes into this behavior.
+        """
+
         return self.__input_param[param]
 
     def interrupt(self):
+
+        """
+        Interrupt this behavior, stopping it. This is used to break an
+        infinite loop within a function that runs the behavior (checked against
+        the is_interrupted function).
+        """
+
         self.__interrupt = True
         self.__is_stopped = True
 
     def is_interrupted(self):
+
+        """
+        A flag that checks if this behavior is to be interrupted. Used in a loop
+        inside the function that runs the behavior.
+        """
+
         if self.__interrupt:
             self.__interrupt = False # reset
             return True
         return False
 
     def is_started(self):
+
         if self.__is_started:
             self.__is_started = False
             return True
@@ -186,6 +236,12 @@ class Behavior():
             target=self.__func, args=(self, self.__arbiter.get_robot()))
 
     def input_param(self, param):
+
+        """
+        Set the input parameters to this behavior, which may change the conduct
+        of the running behavior.
+        """
+
         self.__input_param = param
 
 class Timer:
