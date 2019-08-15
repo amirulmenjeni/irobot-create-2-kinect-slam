@@ -4,10 +4,10 @@ import config
 import time
 import datetime
 import cv2
+import argparse
+import re
 from pynput.keyboard import Key, Listener, KeyCode
 
-HOST = '192.168.31.108'
-PORT = 9000
 MAP_SIZE = config.GRID_MAP_SIZE
 RGB_SIZE = (120, 160)
 BYTES_MAP = MAP_SIZE[0] * MAP_SIZE[1] * 3
@@ -74,11 +74,32 @@ def save_map_image(map_image):
 
     print(filename, 'saved.')
 
+##################################################
+# Define arguments.
+##################################################
+
+parser = argparse.ArgumentParser(description='Client program for '\
+        'interacting with the on-line 2D map generated using SLAM.')
+parser.add_argument('-a', '--ipv4', type=str, help='IPv4 address of the host.')
+parser.add_argument('-p', '--port', type=int, help='The port of the address to
+        connect.')
+
+args = parser.parse_args()
+
+##################################################
+# Initialize callback and listener.
+##################################################
+
+# Set the named window.
 cv2.namedWindow(GRID_MAP_WINDOW)
 cv2.setMouseCallback(GRID_MAP_WINDOW, on_mouse, None)
 
 # Collect events.
 listener = Listener(on_release=on_release)
+
+##################################################
+# Start.
+##################################################
 
 print('Starting listener...')
 listener.start()
@@ -90,7 +111,7 @@ print('Listener is now ready.')
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
-    s.connect((HOST, PORT))
+    s.connect((args.ipv4, args.port))
     f = config.MAP_SCALE_FACTOR
 
     cv2.imshow(GRID_MAP_WINDOW, np.full((30, 30), 0))
@@ -154,7 +175,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 is_conn = False
                 while not is_conn:
                     try:
-                        s.connect((HOST, PORT))
+                        s.connect((args.ipv4, args.port))
                         is_conn = True
                         print('Reconnection successful!')
                     except socket.error:
