@@ -1,4 +1,5 @@
-import numpy as npimport socket
+import numpy as np
+import socket
 import config
 import time
 import datetime
