@@ -105,7 +105,7 @@ listener = Listener(on_release=on_release)
 map_image_store = b''
 
 video_writer = cv2.VideoWriter(\
-    args.video_writer, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,\
+    args.save_video, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,\
     (MAP_SIZE[1], MAP_SIZE[0])\
 )
 
