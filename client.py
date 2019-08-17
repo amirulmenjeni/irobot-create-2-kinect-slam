@@ -85,7 +85,7 @@ parser.add_argument('-p', '--port', type=int, help='The port of the address to'\
         ' connect.')
 parser.add_argument('-s', '--save', type=str, default='',\
         help='Save the map generated overtime as numpy array frame-by-frame.')
-parser.add_argument(-'S', '--save-video', type=str, default='',\
+parser.add_argument('-S', '--save-video', type=str, default='',\
         help='Save the map generated during the current session as an mp4'\
         ' video.')
 
