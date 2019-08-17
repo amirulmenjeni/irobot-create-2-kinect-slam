@@ -19,7 +19,6 @@ import imdraw_util as imdraw
 from behavior_defn import beh_def_list, Beh
 from bbr import Arbiter, Behavior
 from kinect import Kinect
-import freenect
 from openni import openni2
 from playsound import playsound
 from serial.tools import list_ports
