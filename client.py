@@ -80,9 +80,10 @@ def save_map_image(map_image):
 
 parser = argparse.ArgumentParser(description='Client program for '\
         'interacting with the on-line 2D map generated using SLAM.')
-parser.add_argument('-a', '--ipv4', type=str, help='IPv4 address of the host.')
-parser.add_argument('-p', '--port', type=int, help='The port of the address to'\
-        ' connect.')
+parser.add_argument('-a', '--ipv4', type=str,\
+        default='127.0.0.1', help='IPv4 address of the host.')
+parser.add_argument('-p', '--port', type=int,\
+        default='9000', help='The port of the address to connect.')
 parser.add_argument('-s', '--save', type=str, default='',\
         help='Save the map generated overtime as numpy array frame-by-frame.')
 parser.add_argument('-S', '--save-video', type=str, default='',\
