@@ -1,5 +1,4 @@
-import numpy as np
-import socket
+import numpy as npimport socket
 import config
 import time
 import datetime
@@ -81,10 +80,13 @@ def save_map_image(map_image):
 parser = argparse.ArgumentParser(description='Client program for '\
         'interacting with the on-line 2D map generated using SLAM.')
 parser.add_argument('-a', '--ipv4', type=str, help='IPv4 address of the host.')
-parser.add_argument('-p', '--port', type=int, help='The port of the address to
-        connect.')
-parser.add_argument('-s', '--save', default=False, action='store_true',\
+parser.add_argument('-p', '--port', type=int, help='The port of the address to'\
+        ' connect.')
+parser.add_argument('-s', '--save', type=str, default='',\
         help='Save the map generated overtime as numpy array frame-by-frame.')
+parser.add_argument(-'S', '--save-video', type=str, default='',\
+        help='Save the map generated during the current session as an mp4'\
+        ' video.')
 
 args = parser.parse_args()
 
@@ -100,6 +102,11 @@ cv2.setMouseCallback(GRID_MAP_WINDOW, on_mouse, None)
 listener = Listener(on_release=on_release)
 
 map_image_store = b''
+
+video_writer = cv2.VideoWriter(\
+    args.video_writer, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,\
+    (MAP_SIZE[1], MAP_SIZE[0])\
+)
 
 ##################################################
 # Start.
@@ -160,8 +167,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     save_map_image(map_img)
                     tstart = time.time()
 
-                if args.save:
+                if len(args.save) == 0:
                     map_image_store += map_buff
+
+                if len(args.save_video) == 0:
+                    video_writer.write(map_img)
 
                 # Reset input.
                 input_cell = 0
@@ -192,4 +202,4 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
     except KeyboardInterrupt:
         listener.join()
-        np.ndarray.tofile('savefile.npy')
+        np.ndarray.tofile(args.save)
