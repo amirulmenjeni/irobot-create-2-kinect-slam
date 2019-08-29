@@ -80,14 +80,20 @@ def save_map_image(map_image):
 
 parser = argparse.ArgumentParser(description='Client program for '\
         'interacting with the on-line 2D map generated using SLAM.')
-parser.add_argument('-a', '--ipv4', type=str, help='IPv4 address of the host.')
-parser.add_argument('-p', '--port', type=int, help='The port of the address to
-        connect.')
+parser.add_argument('-a', '--ipv4', type=str,\
+        default='127.0.0.1', help='IPv4 address of the host.')
+parser.add_argument('-p', '--port', type=int,\
+        default='9000', help='The port of the address to connect.')
+parser.add_argument('-s', '--save', type=str, default='',\
+        help='Save the map generated overtime as numpy array frame-by-frame.')
+parser.add_argument('-S', '--save-video', type=str, default='',\
+        help='Save the map generated during the current session as an mp4'\
+        ' video.')
 
 args = parser.parse_args()
 
 ##################################################
-# Initialize callback and listener.
+# Initialize.
 ##################################################
 
 # Set the named window.
@@ -96,6 +102,13 @@ cv2.setMouseCallback(GRID_MAP_WINDOW, on_mouse, None)
 
 # Collect events.
 listener = Listener(on_release=on_release)
+
+map_image_store = b''
+
+video_writer = cv2.VideoWriter(\
+    args.save_video, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,\
+    (MAP_SIZE[1], MAP_SIZE[0])\
+)
 
 ##################################################
 # Start.
@@ -128,12 +141,13 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 while len(data) != (BYTES_MAP + BYTES_HUM):
                     data += s.recv(4096)
 
-                map_img = np.frombuffer(data, np.uint8)[:BYTES_MAP]
-                map_img = map_img.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
+                # Receive array buffer containing the map images.
+                map_buf = np.frombuffer(data, np.uint8)[:BYTES_MAP]
+                map_img = map_buf.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
 
-                hum_img = np.frombuffer(\
+                hum_buf = np.frombuffer(\
                         data, np.uint8)[BYTES_MAP:BYTES_MAP+BYTES_HUM]
-                hum_img = hum_img.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
+                hum_img = hum_buf.reshape(MAP_SIZE[1], MAP_SIZE[0], 3)
 
                 # Send input data.
                 snd = 0
@@ -154,6 +168,12 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 if (time.time() - tstart) >= AUTO_SAVE_INTERVAL:
                     save_map_image(map_img)
                     tstart = time.time()
+
+                if len(args.save) == 0:
+                    map_image_store += map_buff
+
+                if len(args.save_video) == 0:
+                    video_writer.write(map_img)
 
                 # Reset input.
                 input_cell = 0
@@ -182,6 +202,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         print('Trying again...')
                         time.sleep(2)
 
-
     except KeyboardInterrupt:
         listener.join()
+        np.ndarray.tofile(args.save)
