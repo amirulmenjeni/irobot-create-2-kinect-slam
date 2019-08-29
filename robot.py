@@ -338,7 +338,9 @@ class Robot:
             The maximum speed each wheel can attain in cm/s.
         """
 
-        logging.basicConfig(filename='stuff.log', level=logging.DEBUG)
+        self.__init_logging()
+
+        logger = logging.getLogger('robot')
 
         self.cmd_snd_semaphore = threading.Semaphore(value=1)
         self.cmd_rcv_semaphore = threading.Semaphore(value=1)
@@ -360,9 +362,9 @@ class Robot:
                     if 'USB' in p:
                         usb_ports.append(p)
                 port = usb_ports[0]
-                logging.info('Found port: {0}'.format(port))
+                logger.info('Found port: {0}'.format(port))
             except:
-                logging.error('No USB serial port found.')
+                logger.error('No USB serial port found.')
                 sys.exit(-1)
 
         self.__b = b
@@ -510,15 +512,36 @@ class Robot:
             np.uint8)
 
         print('battery: {0}%'.format(self.battery_charge() * 100))
-        logging.info('Battery percentage on startup: {0}'.format(\
+        logger.info('Battery percentage on startup: {0}'.format(\
             self.battery_charge() * 100))
+
+    def __init_logging(self):
+
+        FORMAT = '[%(name)s :: %(asctime)s] %(filename)s '\
+            '(line %(lineno)d, %(funcName)s): \n '\
+            '%(levelname)s: %(message)s'
+
+        logging.basicConfig(format=FORMAT, level=logging.DEBUG)
+
+        logger = logging.getLogger('robot')
+        logger.setLevel(logging.DEBUG)
+
+        fh = logging.FileHandler('robot.log')
+        fh.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter(FORMAT)
+        fh.setFormatter(formatter)
+
+        logger.addHandler(fh)
 
     def __init_local_map(self, iterations=30):
 
         local_map = np.full(config.GRID_MAP_SIZE, 0.5)
 
+        logger = logging.getLogger('robot')
+
         # Initialize the map for fastSLAM.
-        logging.info('Initializing FastSLAM map.')
+        logger.info('Initializing FastSLAM map.')
         for _ in range(iterations):
 
             depth_map = self.kin.get_depth()
@@ -534,7 +557,7 @@ class Robot:
             slam.update_occupancy_grid_map(local_map, obs_mat)
 
             time.sleep(1.0 / self.kin.get_depth_fps())
-        logging.info('Finished initializing FastSLAM map.')
+        logger.info('Finished initializing FastSLAM map.')
 
         return local_map
 
@@ -562,6 +585,8 @@ class Robot:
         Initialize all threads.
         """
 
+        logger = logging.getLogger('robot')
+
         self.threads = [
                 threading.Thread(target=Robot.thread_slam, args=(self,),\
                 name='SLAM'),\
@@ -577,11 +602,11 @@ class Robot:
 
         for thread in self.threads:
             if thread.is_alive():
-                logging.info('Thread {0} is started before initialization.'\
+                logger.info('Thread {0} is started before initialization.'\
                     .format(thread.name))
             else:
                 thread.start()
-                logging.info('Thread {0} has started.'.format(thread.name))
+                logger.info('Thread {0} has started.'.format(thread.name))
 
             time.sleep(0.1)
 
@@ -639,10 +664,12 @@ class Robot:
         the iRobot, you may pass chr(128).
         """
 
+        logger = logging.getLogger('robot')
+
         try:
             self.ser.write(bytes(code, encoding='Latin-1'))
         except serial.SerialException as e:
-            logging.error('Error sending code {0}: {1}'.format(code, e))
+            logger.error('Error sending code {0}: {1}'.format(code, e))
 
     def send_codes(self, codes):
 
@@ -1041,6 +1068,8 @@ class Robot:
                 break
 
     def thread_slam(self):
+
+        logger = logging.getLogger('robot')
 
         while True:
 
