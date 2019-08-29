@@ -1,0 +1,8 @@
+# Ignore virtual environment directory.
+venv
+
+# Ignore test scripts.
+tests
+
+__pycache__
+
