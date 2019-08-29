@@ -354,7 +354,12 @@ class Robot:
         # a USB serial port.
         if port == '':
             try:
-                port = self.ports_lookup()[0]
+                ports = self.ports_lookup()
+                usb_ports = []
+                for p in ports:
+                    if 'USB' in p:
+                        usb_ports.append(p)
+                port = usb_ports[0]
                 logging.info('Found port: {0}'.format(port))
             except:
                 logging.error('No USB serial port found.')
