@@ -322,7 +322,7 @@ class StaticPlotter:
 class Robot:
 
     def __init__(self, b=26, port='', max_speed=10,
-        pid_v=(0, 0, 0), pid_w=(0, 0, 0), disable_kinect=False):
+        pid_v=(0, 0, 0), pid_w=(0, 0, 0), setting={}):
 
         """
         Initialize the Robot class.
@@ -369,6 +369,17 @@ class Robot:
         self.__serial_port = port
         self.__client_port = 9000
         self.ser = serial.Serial(port, baudrate=self.baudrate, timeout=1)
+
+        # Setting for this robot.
+        self.setting = {}
+        self.setting['disable_auto'] = False
+        self.setting['enable_human_tracking'] = False
+        self.setting['show_display'] = False
+        
+        # Overwrite default setting.
+        for k in setting.keys():
+            if k in self.setting.keys():
+                self.setting[k] = setting[k]
 
         # Run start command.
         self.start()
@@ -1580,7 +1591,7 @@ class Robot:
             time.sleep(1e-5)
         self.__motion_update_counter_ = self.__motion_update_counter
 
-    def run(self, show_display=False, disable_auto=False):
+    def run(self):
 
         self.__init_threads()
 
@@ -1596,8 +1607,8 @@ class Robot:
                     rutil.save_img(best_particle.m, postfix='_slam')
                     rutil.save_img(self.raw_occ_grid_map, postfix='_odom')
 
-                self.__update_behavior(disable_auto)
-                self.__update_display(show_display)
+                self.__update_behavior()
+                self.__update_display()
 
                 if not self.__conn_ssh:
                     cv2.waitKey(100)
@@ -1610,7 +1621,7 @@ class Robot:
 
             self.clean_up()
 
-    def __update_behavior(self, disable_auto):
+    def __update_behavior(self):
 
         DELTA_V = 0.5
         DELTA_W = 0.0349 # in radians (~2 degrees)
@@ -1627,7 +1638,7 @@ class Robot:
         if self.__client_keyboard == KEY_ESC:
             self.clean_up()
 
-        if not disable_auto:
+        if not self.setting['disable_auto']:
             try:
                 lbump, rbump = self.get_sensor(PKT_BUMP)
                 if lbump or rbump:
@@ -1680,7 +1691,7 @@ class Robot:
                     'goal-cell': self.__manual_goal})
             self.behaviors[Beh.GO_TO_INPUT_GOAL].send_request()
 
-    def __update_display(self, show_display):
+    def __update_display(self):
 
         MAP_SIZE = config.GRID_MAP_SIZE
         RESOLUTION = config.GRID_MAP_RESOLUTION
@@ -1767,7 +1778,7 @@ class Robot:
 
         self.video_writer.write(np.hstack((map_image, raw_image)))
 
-        if not self.__conn_ssh and show_display:
+        if not self.__conn_ssh and self.setting['show_display']:
 
             f = config.MAP_SCALE_FACTOR
             new_shape = map_image.shape[1]*f, map_image.shape[0]*f
