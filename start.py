@@ -28,8 +28,8 @@ args = parser.parse_args()
 
 setting = {\
     'show_display': args.show_display,
-    'enable_human_tracking', args.enable_human_tracking,
-    'disable_auto', args.disable_auto,
+    'enable_human_tracking': args.enable_human_tracking,
+    'disable_auto': args.disable_auto,
 }
 
 r = Robot()
