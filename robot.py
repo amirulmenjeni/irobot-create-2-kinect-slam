@@ -1648,13 +1648,14 @@ class Robot:
                 # sensor value.
                 print('Error getting PKT_BUMP')
 
-            if len(self.h_t) > 0:
-                # self.nearest_human = nearest_human
-                self.behaviors[Beh.APPROACH_HUMAN].input_param({\
-                        'human-pos': self.h_t[0]})
-                self.behaviors[Beh.APPROACH_HUMAN].send_request()
-            else:
-                self.nearest_human = None
+            if self.setting['enable_human_tracking']:
+                if len(self.h_t) > 0:
+                    # self.nearest_human = nearest_human
+                    self.behaviors[Beh.APPROACH_HUMAN].input_param({\
+                            'human-pos': self.h_t[0]})
+                    self.behaviors[Beh.APPROACH_HUMAN].send_request()
+                else:
+                    self.nearest_human = None
 
             self.behaviors[Beh.EXPLORE].send_request()
 

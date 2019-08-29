@@ -18,8 +18,8 @@ parser.add_argument('--show-display',
         help='Show the map display, only work if '\
         'this script is run locally (e.g., not over ssh connection).',\
         default=True, action='store_true')
-parser.add_argument('--enable-human-tracking', help='Enable human tracking
-        behavior.', default=False)
+parser.add_argument('--enable-human-tracking', help='Enable human tracking '\
+        'behavior.', default=False)
 parser.add_argument('--disable-auto', help='Disable autonomous driving.',\
         default=False, action='store_true')
 parser.add_argument('--usb-port', help='The USB port to the roomba robot.',\
