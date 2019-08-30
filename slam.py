@@ -209,6 +209,22 @@ class FastSLAM:
     def __init__(self, map_size, resolution, dt, init_map, num_particles=150,
         motion_noise=(1e-3, 1e-3, 1e-3, 1e-3)):
 
+        """
+        @param map_size:
+            A 2-tuple (W, H), where W and H is the number of columns and rows of
+            the grid map respectively.
+        @param resolution:
+            The real spatial size or width corresponding to each cell on the
+            grid map.
+        @param init_map:
+            The initial map observed during the initial setup of robot, before
+            setting into motion.
+        @param num_particles:
+            The number of particles for the implementation of particle filter.
+        @param motion_noise:
+            Robot specific intrinsic noise parameters.
+        """
+
         self.MAP_SIZE = np.array(map_size)
         self.RESOLUTION = resolution
         self.M = num_particles
@@ -226,6 +242,19 @@ class FastSLAM:
                 [Particle(x, w, np.copy(init_map)) for _ in range(self.M)]
 
     def update(self, z_t, u_t, occu_thres):
+
+        """
+        @param z_t: 
+            Nx2 array of 2D real coordinates representing the obstacle
+            locations.
+        @param u_t:
+            A 2-tuple of (delta distance, delta angle) in cm and radian
+            respectively.
+        @param occu_thres:
+            The threshold value x in [0.0, 1.0], where a cell with
+            occupancy probability above x implies the cell is occupied (not
+            free).
+        """
 
         end_cells = world_frame_to_cell_pos(z_t, self.MAP_SIZE, self.RESOLUTION)
         mid = np.array(self.MAP_SIZE // 2).astype(int)
@@ -286,6 +315,11 @@ class FastSLAM:
         self.particles = ParticleFilter.low_variance_sampler(self.particles)
 
     def highest_particle(self):
+
+        """
+        Return the particle with the highest weight."
+        """
+
         return self.particles[self.best_particle]
 
     def estimate_pose(self):
