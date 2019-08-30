@@ -458,7 +458,6 @@ class Robot:
         self.fast_slam = slam.FastSLAM(\
             self.occ_grid_map.shape,
             config.GRID_MAP_RESOLUTION,
-            config.CONTROL_DELTA_TIME,
             np.copy(local_map),
             num_particles=config.PF_NUM_PARTICLES,
             motion_noise=config.MOTION_NOISE)

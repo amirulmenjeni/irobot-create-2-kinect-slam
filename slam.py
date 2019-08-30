@@ -206,7 +206,7 @@ class Particle:
 
 class FastSLAM:
 
-    def __init__(self, map_size, resolution, dt, init_map, num_particles=150,
+    def __init__(self, map_size, resolution, init_map, num_particles=150,
         motion_noise=(1e-3, 1e-3, 1e-3, 1e-3)):
 
         """
@@ -228,7 +228,6 @@ class FastSLAM:
         self.MAP_SIZE = np.array(map_size)
         self.RESOLUTION = resolution
         self.M = num_particles
-        self.DELTA_TIME = dt
         self.best_particle = 0
         self.MOTION_NOISE = motion_noise
 
