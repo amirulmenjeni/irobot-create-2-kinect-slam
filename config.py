@@ -3,7 +3,7 @@
 ##################################################
 
 # Absolute root directory of this project.
-PROJECT_PATH = '/home/robolab/git/kinect-roomba-slam/'
+PROJECT_PATH = os.getcwd() + '/'
 
 # The redist path for OpenNI2 and NiTE2 containing the relevant files.
 PRIMESENSE_REDIST_PATH = PROJECT_PATH + '/redist/'
