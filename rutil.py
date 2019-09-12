@@ -4,6 +4,7 @@ import datetime
 import cv2
 import socket
 import os
+import tables
 from scipy import ndimage
 
 def rigid_trans_mat3(pose):
@@ -264,6 +265,38 @@ def save_img(img, postfix=''):
     img = (img * 255).astype(np.uint8)
     cv2.imwrite('./saves/img/' + filename + '.png', img)
     print(filename, 'saved.')
+
+def write_data_f64(path, data):
+
+    if type(data) == list:
+        data = np.array(data)
+    if type(data) == np.ndarray and len(data.shape) == 1:
+        data = np.reshape(data, (-1, 2))
+
+    if not os.path.exists(path):
+
+        f = tables.open_file(path, mode='w')
+        atom = tables.Float64Atom()
+
+        # Create enlargable array.
+        arr = f.create_earray(f.root, 'data',\
+            atom=atom, shape=(0, data.shape[1]))
+        
+        arr.append(data)
+
+    else:
+
+        f = tables.open_file(path, mode='a')
+        f.root.data.append(data)
+
+    f.close()
+
+def read_data(path):
+
+    f = tables.open_file(path, mode='r')
+    data = f.root.data[:,:]
+    f.close()
+    return data
 
 vec_log_odds_to_prob = np.vectorize(log_odds_to_prob)
 vec_prob_to_log_odds = np.vectorize(prob_to_log_odds)
