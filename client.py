@@ -6,6 +6,7 @@ import datetime
 import cv2
 import argparse
 import re
+import rutil
 from pynput.keyboard import Key, Listener, KeyCode
 
 MAP_SIZE = config.GRID_MAP_SIZE
@@ -59,6 +60,9 @@ def on_release(key):
 
     print('input key:', input_key)
 
+    if input_key == KEY_ESC:
+        return False
+
 def save_map_image(map_image):
 
     now = datetime.datetime.now()
@@ -74,6 +78,12 @@ def save_map_image(map_image):
 
     print(filename, 'saved.')
 
+def on_exit():
+    print('Saving map data...')
+    np.save('./saves/' + rutil.now_file_name(postfix='.npy'), frame_array)
+    listener.join()
+    print('Exiting...')
+
 ##################################################
 # Define arguments.
 ##################################################
@@ -84,11 +94,10 @@ parser.add_argument('-a', '--ipv4', type=str,\
         default='127.0.0.1', help='IPv4 address of the host.')
 parser.add_argument('-p', '--port', type=int,\
         default='9000', help='The port of the address to connect.')
-parser.add_argument('-s', '--save', type=str, default='',\
-        help='Save the map generated overtime as numpy array frame-by-frame.')
-parser.add_argument('-S', '--save-video', type=str, default='',\
-        help='Save the map generated during the current session as an mp4'\
-        ' video.')
+parser.add_argument('-S', '--save-map-display', default=False,\
+        action='store_true',\
+        help='Save the map generation display during the current session as '\
+            'a numpy array.')
 
 args = parser.parse_args()
 
@@ -103,12 +112,8 @@ cv2.setMouseCallback(GRID_MAP_WINDOW, on_mouse, None)
 # Collect events.
 listener = Listener(on_release=on_release)
 
-map_image_store = b''
-
-video_writer = cv2.VideoWriter(\
-    args.save_video, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,\
-    (MAP_SIZE[1], MAP_SIZE[0])\
-)
+# Save frames of the map display.
+frame_array = []
 
 ##################################################
 # Start.
@@ -127,8 +132,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((args.ipv4, args.port))
     f = config.MAP_SCALE_FACTOR
 
-    cv2.imshow(GRID_MAP_WINDOW, np.full((30, 30), 0))
-    cv2.waitKey(10)
+    # cv2.imshow(GRID_MAP_WINDOW, np.full((30, 30), 0))
+    # cv2.waitKey(10)
 
     try:
 
@@ -162,6 +167,9 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
                 s.sendall(snd)
 
+                if input_key == KEY_ESC:
+                    break
+
                 if input_key == KEY_F1:
                     save_map_image(map_img)
 
@@ -169,11 +177,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     save_map_image(map_img)
                     tstart = time.time()
 
-                if len(args.save) == 0:
-                    map_image_store += map_buff
-
-                if len(args.save_video) == 0:
-                    video_writer.write(map_img)
+                if args.save_map_display:
+                    frame_array.append(map_img)
 
                 # Reset input.
                 input_cell = 0
@@ -203,5 +208,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         time.sleep(2)
 
     except KeyboardInterrupt:
-        listener.join()
-        np.ndarray.tofile(args.save)
+        pass
+
+on_exit()
