@@ -1,4 +1,4 @@
-#Installation
+# Installation
 
 1. Clone the git repository:
    `git clone https://gitlab.com/ailabuser/kinect-roomba-slam`
