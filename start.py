@@ -32,6 +32,6 @@ setting = {\
     'disable_auto': args.disable_auto,
 }
 
-r = Robot()
+r = Robot(setting=setting)
 r.drive_velocity(0, 0)
-r.run(setting=setting)
+r.run()
