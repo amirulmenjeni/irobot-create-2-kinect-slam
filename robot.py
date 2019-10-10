@@ -433,11 +433,8 @@ class Robot:
              1: '111',
              2: '000'}) # Plot number 2 is not drawn
 
-        if not disable_kinect:
-            self.kin = Kinect(config.PRIMESENSE_REDIST_PATH,\
-                enable_color_stream=False)
-        else:
-            self.kin = None
+        self.kin = Kinect(config.PRIMESENSE_REDIST_PATH,\
+            enable_color_stream=False)
 
         ###################################################
         # Status.
