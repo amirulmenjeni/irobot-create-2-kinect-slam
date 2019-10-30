@@ -192,7 +192,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     interpolation=cv2.INTER_AREA)
 
                 cv2.imshow(GRID_MAP_WINDOW, map_img)
-                cv2.imshow(HUMAN_MAP_WINDOW, hum_img)
+                # cv2.imshow(HUMAN_MAP_WINDOW, hum_img)
                 cv2.waitKey(100)
 
             except socket.error:
