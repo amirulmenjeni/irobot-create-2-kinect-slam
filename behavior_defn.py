@@ -28,7 +28,7 @@ def approach_human(beh, robot):
     ROTATE_SPEED = config.NORMAL_ROTATE_SPEED
     DELTA_TIME = config.CONTROL_DELTA_TIME
 
-    CELL_STEPS = 3
+    CELL_STEPS = 10
     RADIUS_TOL = 100
 
     goal_cell = None
@@ -153,8 +153,8 @@ def explore(beh, robot):
     # The first unexplored cell found in the solution path.
     frontier_cell = None
 
-    goal_cell = None
-    next_cell = None
+    # goal_cell = DataPool.read('goal_cell')
+    # next_cell = DataPool.read('next_cell')
     solution = []
 
     while True:
@@ -224,6 +224,8 @@ def explore(beh, robot):
             print('Scanning after 250 cm distance traveled.')
             robot.reset_distance_traveled()
             beh.continue_to(robot.behaviors[Beh.SCAN_360])
+            # DataPool.write('goal_cell', goal_cell)
+            # DataPool.write('next_cell', goal_cell)
             return
 
         if rutil.is_in_circle(goal_pos, RADIUS_TOL, best_particle.x[:2]):

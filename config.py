@@ -46,7 +46,7 @@ OCCU_THRES = 0.90
 # Kernel defining the shape representation of the robot projected on the grid
 # map.
 BODY_KERNEL_RADIUS = 2
-PATH_COST_RADIUS = 5
+PATH_COST_RADIUS = 7
 
 ##################################################
 # SOUNDS

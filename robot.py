@@ -377,6 +377,7 @@ class Robot:
         self.setting['disable_auto'] = False
         self.setting['enable_human_tracking'] = False
         self.setting['show_display'] = False
+        self.setting['record_frames'] = False
         
         # Overwrite default setting.
         for k in setting.keys():
@@ -470,11 +471,12 @@ class Robot:
         self.__distance_traveled = 0
         self.scan_locations = []
 
-        filename = rutil.now_file_name()
-        filename = './saves/vid/' + filename + '.avi'
-        self.video_writer = cv2.VideoWriter(\
-            filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
-            (config.GRID_MAP_SIZE[1]*2, config.GRID_MAP_SIZE[0]))
+        if self.setting['record_frames']:
+            filename = rutil.now_file_name()
+            filename = './saves/vid/' + filename + '.avi'
+            self.video_writer = cv2.VideoWriter(\
+                filename, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 30,
+                (config.GRID_MAP_SIZE[1]*2, config.GRID_MAP_SIZE[0]))
 
         ###################################################
         # Behavior based robotic.
@@ -1802,7 +1804,8 @@ class Robot:
         # rgb_image = cv2.resize(rgb_image, map_image.shape[:2], rgb_image, fx, fy,
         #         cv2.INTER_NEAREST)
 
-        self.video_writer.write(np.hstack((map_image, raw_image)))
+        if self.setting['record_frames']:
+            self.video_writer.write(np.hstack((map_image, raw_image)))
 
         if not self.__conn_ssh and self.setting['show_display']:
 

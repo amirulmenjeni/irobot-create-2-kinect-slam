@@ -22,6 +22,9 @@ parser.add_argument('--enable-human-tracking', help='Enable human tracking '\
         'behavior.', default=False)
 parser.add_argument('--disable-auto', help='Disable autonomous driving.',\
         default=False, action='store_true')
+parser.add_argument('--record-frames',\
+        help='Record each frame of map  as video.',
+        default=False, action='store_false')
 parser.add_argument('--usb-port', help='The USB port to the roomba robot.',\
         default='/dev/ttyUSB0')
 args = parser.parse_args()
@@ -30,6 +33,7 @@ setting = {\
     'show_display': args.show_display,
     'enable_human_tracking': args.enable_human_tracking,
     'disable_auto': args.disable_auto,
+    'record_frames': args.record_frames,
 }
 
 r = Robot(setting=setting)

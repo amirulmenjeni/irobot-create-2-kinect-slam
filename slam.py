@@ -347,6 +347,10 @@ class FastSLAM:
 
         pass
 
+class __Params:
+
+    map_cost_function = None
+
 def cell_to_world_pos(cell, map_size, resolution, center=False):
 
     """
@@ -1121,6 +1125,9 @@ def is_colliding(cell, grid_map, occu_thres, kernel_radius):
 
 def path_cost(cell, grid_map, occu_thres, cost_radius, sigma_dist=10):
 
+    if __Params.map_cost_function[cell] > -1:
+        return __Params.map_cost_function[cell]
+
     row, col = cell
     count = 1
 
@@ -1132,6 +1139,8 @@ def path_cost(cell, grid_map, occu_thres, cost_radius, sigma_dist=10):
                     val = rutil.euclidean_distance(cell, (i, j))
                     # count += 10 / (val**2 + val)
                     count += prob_normal_distribution(val, sigma_dist)
+
+    __Params.map_cost_function[cell] = count
 
     return count
 
@@ -1198,6 +1207,10 @@ def shortest_path(start, goal, grid_map, occu_thres,
         such as that returned by a classical A* search algorithm.
     """
 
+    if __Params.map_cost_function is None:
+        __Params.map_cost_function = np.full(\
+            grid_map.shape, -1, dtype=np.float64)
+
     goal = tuple(goal)
     kernel_radius = np.array(kernel_radius)
 
@@ -1208,7 +1221,7 @@ def shortest_path(start, goal, grid_map, occu_thres,
     # Heuristic function.
     # h = lambda n : np.sum(np.abs(np.array(n.label) - np.array(goal)))
     h = lambda n: rutil.euclidean_distance(n.label, goal)
-    
+
     # Path-cost function.
     g = lambda n : n.parent.g_cost +\
             path_cost(n.label, grid_map, occu_thres, cost_radius)
