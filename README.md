@@ -25,21 +25,21 @@
 
 To run the SLAM robot, the a laptop mounted on the robot must run the core
 script which acts as the server; a remote client can then connect to this
-server to remotely view the map and robot location display.
+server to remotely view and interact with the map.
 
 1. Run `start.py` script to start the SLAM system on the laptop mounted on the
-   robot (pass `--disable-auto`, because by default it will try to drive
+   robot (pass `--disable-auto`, because by default it will try to explore 
    autonomously, which is currently not up to mark):
 
-   ```bash
-	python start.py --disable-auto
-   ```
+```bash
+python start.py --disable-auto
+```
 
 2. Run `client.py` script to view the map (and the robot location) on another
    laptop or PC. You can also interact with the map to manually pick a point
    location on the map for the robot to autonomously drive to. You'll also need
    to pass the IP address of the laptop running the core script:
 
-   ```bash
-   	python client.py -a IPV4_ADDRESS
-   ```
+```bash
+python client.py -a IPV4_ADDRESS
+```
