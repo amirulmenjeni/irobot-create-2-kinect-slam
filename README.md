@@ -1,7 +1,6 @@
 # Installation
 
-1. Clone the git repository:
-   `git clone https://gitlab.com/ailabuser/kinect-roomba-slam`
+1. Clone the git repository
 2. Install `libudev`:
     - On Ubuntu: `sudo apt install libudev-dev`
     - On Arch Linux: `sudo pacman -S systemd-libs`
